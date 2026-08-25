@@ -1,0 +1,29 @@
+# Chakra OS v0.1 — base package set installed into the rootfs after debootstrap.
+# One package per line. Comments (#) and blank lines are ignored by build_iso.sh.
+
+# Base system
+systemd-sysv
+sudo
+nano
+wget
+curl
+net-tools
+
+# Kernel + boot
+linux-image-amd64
+live-boot
+grub-pc-bin
+grub-efi-amd64-bin
+
+# Desktop
+kde-plasma-desktop
+sddm
+
+# Networking
+network-manager
+plasma-nm
+
+# Audio foundation
+pipewire
+pipewire-pulse
+wireplumber

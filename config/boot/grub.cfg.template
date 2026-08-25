@@ -1,0 +1,20 @@
+set default=0
+set timeout=10
+
+insmod all_video
+insmod gfxterm
+terminal_output gfxterm
+
+menuentry "Try Chakra OS @@CHAKRA_VERSION@@" {
+    linux /live/vmlinuz boot=live components quiet splash
+    initrd /live/initrd.img
+}
+
+menuentry "Try Chakra OS @@CHAKRA_VERSION@@ (safe graphics)" {
+    linux /live/vmlinuz boot=live components nomodeset
+    initrd /live/initrd.img
+}
+
+menuentry "Boot from first hard disk" {
+    exit
+}
