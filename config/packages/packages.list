@@ -8,6 +8,7 @@ nano
 wget
 curl
 net-tools
+git
 
 # Kernel + boot
 linux-image-amd64
@@ -18,6 +19,14 @@ grub-efi-amd64-bin
 # Desktop
 kde-plasma-desktop
 sddm
+
+# Browser (Debian's official package is firefox-esr; there is no plain
+# "firefox" package in Debian main due to Mozilla trademark restrictions)
+firefox-esr
+
+# Windows 11-style theming (Fluent icon/cursor theme, global theme, Kvantum engine)
+qt5-style-kvantum
+qt5-style-kvantum-themes
 
 # Networking
 network-manager

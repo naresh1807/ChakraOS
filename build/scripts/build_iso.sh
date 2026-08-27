@@ -162,6 +162,90 @@ EOF
 
   ln -sf /lib/systemd/system/graphical.target "$ROOTFS/etc/systemd/system/default.target"
   chroot "$ROOTFS" systemctl enable NetworkManager sddm >/dev/null 2>&1 || true
+
+  log "Setting default timezone to Asia/Kolkata (IST)..."
+  echo "Asia/Kolkata" > "$ROOTFS/etc/timezone"
+  chroot "$ROOTFS" ln -sf /usr/share/zoneinfo/Asia/Kolkata /etc/localtime
+  chroot "$ROOTFS" dpkg-reconfigure -f noninteractive tzdata >/dev/null 2>&1 || true
+}
+
+apply_windows11_theme() {
+  # shellcheck disable=SC1090
+  source "$CONFIG_DIR/defaults/user.conf"
+  log "Installing Windows 11-style theme (Fluent icons/cursors + global theme)..."
+
+  chroot "$ROOTFS" bash -c '
+    set -e
+    rm -rf /tmp/theme-build
+    mkdir -p /tmp/theme-build
+    cd /tmp/theme-build
+
+    git clone --depth 1 https://github.com/vinceliuice/Fluent-icon-theme.git
+    (cd Fluent-icon-theme && ./install.sh -a -d /usr/share/icons)
+
+    git clone --depth 1 https://github.com/vinceliuice/Fluent-kde.git
+    (cd Fluent-kde && ./install.sh --round --color dark)
+  ' || { log "WARNING: theme download/install failed (network issue?) — continuing without Windows 11 theme."; return 0; }
+
+  # Discover the actual names the installers used rather than hardcoding guesses,
+  # since these upstream projects can rename variants between releases.
+  local icon_theme aurorae_theme kvantum_theme color_scheme lnf_id
+  icon_theme="$(chroot "$ROOTFS" bash -c "ls /usr/share/icons 2>/dev/null | grep -i '^Fluent.*dark' | head -1")"
+  [[ -n "$icon_theme" ]] || icon_theme="$(chroot "$ROOTFS" bash -c "ls /usr/share/icons 2>/dev/null | grep -i fluent | head -1")"
+  aurorae_theme="$(chroot "$ROOTFS" bash -c "ls /usr/share/aurorae/themes 2>/dev/null | grep -i fluent | head -1")"
+  kvantum_theme="$(chroot "$ROOTFS" bash -c "ls /usr/share/Kvantum 2>/dev/null | grep -i fluent | head -1")"
+  color_scheme="$(chroot "$ROOTFS" bash -c "ls /usr/share/color-schemes 2>/dev/null | grep -i fluent | head -1" | sed 's/\.colors$//')"
+  lnf_id="$(chroot "$ROOTFS" bash -c "ls /usr/share/plasma/look-and-feel 2>/dev/null | grep -i fluent | head -1")"
+
+  log "Theme components found — icons: ${icon_theme:-none}, aurorae: ${aurorae_theme:-none}, kvantum: ${kvantum_theme:-none}, color-scheme: ${color_scheme:-none}, look-and-feel: ${lnf_id:-none}"
+
+  # Pre-seed the default user's config directly. There is no live Plasma/D-Bus
+  # session available inside a chroot to "apply" the theme normally, so we
+  # write the config keys the running session would otherwise have written.
+  local chakra_home="$ROOTFS/home/$CHAKRA_USERNAME"
+  mkdir -p "$chakra_home/.config"
+
+  {
+    echo "[Icons]"
+    echo "Theme=${icon_theme:-breeze-dark}"
+    echo ""
+    echo "[KDE]"
+    echo "widgetStyle=kvantum"
+    echo ""
+    echo "[General]"
+    [[ -n "$color_scheme" ]] && echo "ColorScheme=$color_scheme"
+  } > "$chakra_home/.config/kdeglobals"
+
+  if [[ -n "$aurorae_theme" ]]; then
+    {
+      echo "[org.kde.kdecoration2]"
+      echo "library=org.kde.kwin.aurorae"
+      echo "theme=__aurorae__svg__${aurorae_theme}"
+    } > "$chakra_home/.config/kwinrc"
+  fi
+
+  if [[ -n "$kvantum_theme" ]]; then
+    mkdir -p "$chakra_home/.config/Kvantum"
+    {
+      echo "[General]"
+      echo "theme=$kvantum_theme"
+    } > "$chakra_home/.config/Kvantum/kvantum.kvconfig"
+  fi
+
+  {
+    echo "[Mouse]"
+    echo "cursorTheme=${icon_theme:-breeze_cursors}"
+  } > "$chakra_home/.config/kcminputrc"
+
+  # Taskbar stays at Plasma's own default (left-aligned) layout. An earlier
+  # build baked a centered layout into this same persistent rootfs — remove
+  # that leftover file so Plasma regenerates its true stock default instead
+  # of reusing the old centered one.
+  rm -f "$chakra_home/.config/plasma-org.kde.plasma.desktop-appletsrc"
+
+  chroot "$ROOTFS" chown -R "$CHAKRA_USERNAME:$CHAKRA_USERNAME" "/home/$CHAKRA_USERNAME/.config"
+
+  chroot "$ROOTFS" rm -rf /tmp/theme-build
 }
 
 build_squashfs() {
@@ -213,6 +297,7 @@ main() {
   install_packages
   create_default_user
   apply_branding_and_boot_target
+  apply_windows11_theme
   cleanup_mounts
   build_squashfs
   stage_kernel_and_grub
