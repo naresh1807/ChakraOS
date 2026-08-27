@@ -168,7 +168,7 @@ build_squashfs() {
   log "Building squashfs from rootfs..."
   mkdir -p "$ISO_STAGE/live" "$ISO_STAGE/boot/grub"
   mksquashfs "$ROOTFS" "$ISO_STAGE/live/filesystem.squashfs" \
-    -comp xz -e boot -noappend \
+    -noappend -comp xz -e boot \
     2>&1 | tail -5
 }
 

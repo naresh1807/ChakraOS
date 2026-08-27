@@ -15,6 +15,16 @@ menuentry "Try Chakra OS @@CHAKRA_VERSION@@ (safe graphics)" {
     initrd /live/initrd.img
 }
 
+menuentry "Try Chakra OS @@CHAKRA_VERSION@@ (debug - verbose boot log)" {
+    linux /live/vmlinuz boot=live components
+    initrd /live/initrd.img
+}
+
+menuentry "Try Chakra OS @@CHAKRA_VERSION@@ (serial console debug)" {
+    linux /live/vmlinuz boot=live components console=ttyS0,115200n8
+    initrd /live/initrd.img
+}
+
 menuentry "Boot from first hard disk" {
     exit
 }
