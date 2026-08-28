@@ -36,3 +36,92 @@ plasma-nm
 pipewire
 pipewire-pulse
 wireplumber
+
+# --- Phase 2: security & forensics tooling ---
+# All names below were verified against Debian bookworm's actual package
+# index via a dry-run install before being added here. Not apt-installable
+# in bookworm main: theharvester, radare2, kismet, upx, bulk-extractor
+# (would need pip/source install if wanted later); nikto and Burp Suite
+# Community are installed separately in build_iso.sh (install_nikto,
+# install_burpsuite) since neither is a Debian package at all; Metasploit
+# likewise via install_metasploit (Rapid7's own installer).
+
+# Network security / reconnaissance
+nmap
+wireshark
+tcpdump
+aircrack-ng
+netcat-openbsd
+masscan
+arp-scan
+netdiscover
+# ettercap-graphical and ettercap-text-only are alternate builds that
+# conflict (both provide the same ettercap binary) — using the GUI
+# version since this is a desktop OS.
+ettercap-graphical
+iperf3
+mtr-tiny
+
+# Wireless security
+reaver
+wifite
+
+# Web application security testing
+sqlmap
+dirb
+whatweb
+wapiti
+gobuster
+ffuf
+
+# Password / credential testing
+hydra
+john
+hashcat
+crunch
+cewl
+medusa
+
+# Malware analysis
+clamav
+clamav-daemon
+yara
+ssdeep
+
+# Reverse engineering
+gdb
+strace
+ltrace
+checksec
+
+# OSINT / reconnaissance utilities
+whois
+dnsutils
+recon-ng
+
+# Network monitoring
+iftop
+nethogs
+vnstat
+
+# Digital forensics — disk & file
+sleuthkit
+autopsy
+testdisk
+foremost
+binwalk
+extundelete
+scalpel
+
+# Digital forensics — acquisition & hashing
+gddrescue
+hashdeep
+ewf-tools
+guymager
+
+# Digital forensics — metadata
+libimage-exiftool-perl
+
+# Digital forensics — steganography
+steghide
+outguess

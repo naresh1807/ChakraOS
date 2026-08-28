@@ -126,6 +126,67 @@ install_packages() {
   "
 }
 
+install_metasploit() {
+  # Metasploit isn't in Debian's own repos — the official route is Rapid7's
+  # installer script, which adds their own signed apt repo and pulls in its
+  # dependencies (including PostgreSQL) that way. This is a large download
+  # (multi-GB) and, unlike everything in packages.list, isn't a single
+  # verifiable package name — best-effort and non-fatal if it fails.
+  log "Installing Metasploit Framework (Rapid7 official installer — large download)..."
+  # msfinstall's gpg key import prompts "Overwrite?" if a keyring from a
+  # prior (e.g. interrupted) run already exists, and hangs forever since
+  # nothing can answer that non-interactively — remove it first so reruns
+  # are safe.
+  rm -f "$ROOTFS/usr/share/keyrings/metasploit-framework.gpg"
+  chroot "$ROOTFS" bash -c '
+    set -e
+    cd /tmp
+    curl https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb > msfinstall
+    chmod 755 msfinstall
+    ./msfinstall < /dev/null
+    rm -f msfinstall
+  ' || { log "WARNING: Metasploit installer failed (network issue?) — continuing without it."; return 0; }
+
+  # The installer's own dependencies include PostgreSQL; enable it so the
+  # service is available once actually booted (chroot has no running init
+  # to start it now). msfdb init itself needs a live session, so that's a
+  # one-time step for whoever first launches msfconsole.
+  chroot "$ROOTFS" systemctl enable postgresql >/dev/null 2>&1 || true
+  log "Metasploit installed — run 'msfdb init' the first time msfconsole is launched in the live session."
+}
+
+install_nikto() {
+  # Not in Debian's repos (confirmed via dry-run earlier), but it's just a
+  # lightweight Perl script with no heavy installer — plain git clone.
+  log "Installing Nikto web server scanner from source (not in Debian repos)..."
+  chroot "$ROOTFS" bash -c '
+    set -e
+    rm -rf /opt/nikto
+    git clone --depth 1 https://github.com/sullo/nikto.git /opt/nikto
+    chmod +x /opt/nikto/program/nikto.pl
+    ln -sf /opt/nikto/program/nikto.pl /usr/local/bin/nikto
+  ' || { log "WARNING: Nikto install failed (network issue?) — continuing without it."; return 0; }
+}
+
+install_burpsuite() {
+  # Burp Suite Community isn't in Debian's repos, and unlike Metasploit,
+  # PortSwigger doesn't publish documented silent-install flags for the
+  # Community edition specifically (only Enterprise/DAST). This uses -q
+  # from its BitRock InstallBuilder base as a best-effort guess — more
+  # likely than anything else here to need manual follow-up in the live
+  # session if the installer expects a display even in "quiet" mode.
+  log "Installing Burp Suite Community Edition (best-effort — undocumented silent flags)..."
+  chroot "$ROOTFS" bash -c '
+    set -e
+    cd /tmp
+    curl -L -o burpsuite_installer.sh "https://portswigger.net/burp/releases/download?product=community&type=Linux"
+    chmod +x burpsuite_installer.sh
+    ./burpsuite_installer.sh -q -dir /opt/BurpSuiteCommunity
+    rm -f burpsuite_installer.sh
+    ln -sf /opt/BurpSuiteCommunity/BurpSuiteCommunity /usr/local/bin/burpsuite
+  ' || { log "WARNING: Burp Suite installer failed or needs an interactive display — download and run it manually from the live session if needed: https://portswigger.net/burp/releases/community/latest"; return 0; }
+}
+
 create_default_user() {
   # shellcheck disable=SC1090
   source "$CONFIG_DIR/defaults/user.conf"
@@ -295,6 +356,9 @@ main() {
   configure_base
   mount_virtual_fs
   install_packages
+  install_metasploit
+  install_nikto
+  install_burpsuite
   create_default_user
   apply_branding_and_boot_target
   apply_windows11_theme
