@@ -1,5 +1,6 @@
 #!/bin/bash
-# Chakra OS reproducible ISO build pipeline (Phase 1 / v0.1).
+# Chakra OS reproducible ISO build pipeline (v0.1, codename "Sudarshana").
+# See docs/roadmap.md for the full phase breakdown.
 #
 #   debootstrap -> package install -> user/branding config ->
 #   squashfs -> ISO staging -> grub-mkrescue -> checksum -> (optional) QEMU test
@@ -202,6 +203,44 @@ create_default_user() {
   chroot "$ROOTFS" passwd "$CHAKRA_USERNAME"
 }
 
+apply_chakra_core() {
+  log "Installing chakra-core (system identity, directories, environment)..."
+
+  # Filesystem layout, declared once via systemd-tmpfiles (core/systemd/)
+  # so it's self-healing on every boot, not just baked in at build time.
+  mkdir -p "$ROOTFS/usr/lib/tmpfiles.d"
+  cp "$PROJECT_ROOT/core/systemd/chakra-core.conf" "$ROOTFS/usr/lib/tmpfiles.d/chakra-core.conf"
+
+  # Create them now too, so they exist in the shipped image immediately
+  # rather than only after the first tmpfiles-setup run.
+  mkdir -p "$ROOTFS/etc/chakra/policy.d" \
+           "$ROOTFS/usr/lib/chakra" \
+           "$ROOTFS/usr/share/chakra" \
+           "$ROOTFS/var/lib/chakra" \
+           "$ROOTFS/var/log/chakra"
+  chmod 0750 "$ROOTFS/var/lib/chakra" "$ROOTFS/var/log/chakra"
+
+  # Chakra's own machine-readable identity file -- distinct from
+  # /etc/os-release, for future chakra-* tools to read directly.
+  cat > "$ROOTFS/etc/chakra-release" <<EOF
+CHAKRA_NAME="Chakra OS"
+CHAKRA_VERSION="$CHAKRA_VERSION"
+CHAKRA_CODENAME="Sudarshana"
+CHAKRA_BASE="Debian GNU/Linux $DEBIAN_SUITE"
+CHAKRA_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+CHAKRA_HOME_URL="https://github.com/naresh1807/ChakraOS"
+EOF
+
+  # Same identity, as an environment variable, without needing to parse
+  # the release file.
+  mkdir -p "$ROOTFS/etc/profile.d"
+  cat > "$ROOTFS/etc/profile.d/chakra.sh" <<EOF
+export CHAKRA_VERSION="$CHAKRA_VERSION"
+export CHAKRA_CODENAME="Sudarshana"
+EOF
+  chmod 644 "$ROOTFS/etc/profile.d/chakra.sh"
+}
+
 apply_branding_and_boot_target() {
   log "Applying Chakra OS branding and boot target..."
   sed -i \
@@ -286,13 +325,14 @@ EOF
   # --- neofetch: system-wide ascii art + per-user config override.
   # image_source pointing at a plain text file makes neofetch cat it
   # directly as the logo (no colors unless the file has raw ANSI codes,
-  # which this one deliberately doesn't, to render identically everywhere). ---
-  mkdir -p "$ROOTFS/usr/share/chakra-os"
-  cp "$assets/neofetch/ascii-logo.txt" "$ROOTFS/usr/share/chakra-os/ascii-logo.txt"
+  # which this one deliberately doesn't, to render identically everywhere).
+  # Lives under the chakra-core /usr/share/chakra/ path (see core/filesystem/README.md). ---
+  mkdir -p "$ROOTFS/usr/share/chakra"
+  cp "$assets/neofetch/ascii-logo.txt" "$ROOTFS/usr/share/chakra/ascii-logo.txt"
   local chakra_home="$ROOTFS/home/$CHAKRA_USERNAME"
   mkdir -p "$chakra_home/.config/neofetch"
   cat > "$chakra_home/.config/neofetch/config.conf" <<'EOF'
-image_source="/usr/share/chakra-os/ascii-logo.txt"
+image_source="/usr/share/chakra/ascii-logo.txt"
 EOF
   chroot "$ROOTFS" chown -R "$CHAKRA_USERNAME:$CHAKRA_USERNAME" "/home/$CHAKRA_USERNAME/.config" 2>/dev/null || true
 }
@@ -517,6 +557,7 @@ main() {
   install_nikto
   install_burpsuite
   create_default_user
+  apply_chakra_core
   apply_branding_and_boot_target
   apply_boot_and_login_branding
   apply_windows11_theme
