@@ -421,6 +421,51 @@ apply_desktop_icons() {
   chroot "$ROOTFS" chown -R "$CHAKRA_USERNAME:$CHAKRA_USERNAME" "/home/$CHAKRA_USERNAME/Desktop"
 }
 
+apply_friendly_app_names() {
+  log "Renaming KDE app menu entries to familiar Windows/Kali-style names..."
+  local apps_dir="$ROOTFS/usr/share/applications"
+  [[ -d "$apps_dir" ]] || { log "WARNING: $apps_dir not found — skipping app rename pass."; return 0; }
+
+  _chakra_rename_app() {
+    local pattern="$1" new_name="$2"
+    local m
+    # Discover the actual shipped filename(s) rather than hardcoding an
+    # exact desktop-file-id, since that varies by package/version — same
+    # approach used for the Fluent theme component discovery above.
+    for m in $(ls "$apps_dir" 2>/dev/null | grep -i "$pattern" || true); do
+      # Replace only the first, unlocalized "Name=" line; leave any
+      # localized Name[xx]= entries alone.
+      sed -i "0,/^Name=/{s/^Name=.*/Name=$new_name/}" "$apps_dir/$m"
+    done
+  }
+
+  _chakra_rename_app "konsole"        "Terminal"
+  _chakra_rename_app "dolphin"        "File Explorer"
+  _chakra_rename_app "kate"           "Text Editor"
+  _chakra_rename_app "kwrite"         "Notepad"
+  _chakra_rename_app "discover"       "Software Center"
+  _chakra_rename_app "systemsettings" "Control Panel"
+  _chakra_rename_app "spectacle"      "Snipping Tool"
+  unset -f _chakra_rename_app
+
+  # The Kali-style "two terminals" split: the renamed Terminal above stays a
+  # normal-user shell; this adds a second, separate menu entry that opens
+  # straight into a root shell via sudo (chakra is already in the sudo
+  # group from create_default_user), same pairing Kali's menu has long
+  # offered and that Windows 11's Start menu mirrors as "Terminal" /
+  # "Terminal (Admin)".
+  cat > "$apps_dir/chakra-terminal-admin.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Terminal (Admin)
+Comment=Terminal with administrator (root) privileges
+Icon=utilities-terminal
+Exec=konsole -e sudo -s
+Terminal=false
+Categories=System;TerminalEmulator;
+EOF
+}
+
 build_squashfs() {
   log "Building squashfs from rootfs..."
   mkdir -p "$ISO_STAGE/live" "$ISO_STAGE/boot/grub"
@@ -476,6 +521,7 @@ main() {
   apply_boot_and_login_branding
   apply_windows11_theme
   apply_desktop_icons
+  apply_friendly_app_names
   cleanup_mounts
   build_squashfs
   stage_kernel_and_grub
