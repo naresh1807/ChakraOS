@@ -1,0 +1,41 @@
+# Chakra OS Plymouth boot splash (script module).
+# Centered logo + a 12-dot orbiting spinner drawn procedurally (no frame
+# sequence needed). Plymouth fails open on a script error -- worst case is
+# a blank/fallback splash, not a blocked boot.
+
+Window.SetBackgroundTopColor(0.024, 0.098, 0.176);
+Window.SetBackgroundBottomColor(0.0, 0.024, 0.05);
+
+logo.image = Image("logo.png");
+logo.sprite = Sprite(logo.image);
+logo.sprite.SetX(Window.GetWidth() / 2 - logo.image.GetWidth() / 2);
+logo.sprite.SetY(Window.GetHeight() / 2 - logo.image.GetHeight() / 2 - 50);
+logo.sprite.SetZ(10000);
+
+dot_image = Image("dot.png");
+dot_count = 12;
+spinner_radius = 70;
+spinner_center_x = Window.GetWidth() / 2;
+spinner_center_y = Window.GetHeight() / 2 + 90;
+
+for (i = 0; i < dot_count; i++) {
+    dot[i].sprite = Sprite(dot_image);
+    dot[i].sprite.SetZ(10000);
+}
+
+angle = 0;
+
+fun refresh_callback() {
+    angle += 0.09;
+    for (i = 0; i < dot_count; i++) {
+        a = angle + i * (6.283185 / dot_count);
+        x = spinner_center_x + spinner_radius * Math.Cos(a) - dot_image.GetWidth() / 2;
+        y = spinner_center_y + spinner_radius * Math.Sin(a) - dot_image.GetHeight() / 2;
+        dot[i].sprite.SetX(x);
+        dot[i].sprite.SetY(y);
+        fade = (Math.Sin(a) + 1) / 2;
+        dot[i].sprite.SetOpacity(0.25 + 0.75 * fade);
+    }
+}
+
+Plymouth.SetRefreshFunction(refresh_callback);

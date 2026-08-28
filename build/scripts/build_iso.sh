@@ -212,6 +212,10 @@ apply_branding_and_boot_target() {
     echo ""
     echo "CHAKRA_VERSION=$CHAKRA_VERSION"
     echo "CHAKRA_BASE=\"Debian GNU/Linux $DEBIAN_SUITE\""
+    echo "ANSI_COLOR=\"0;38;5;33\""
+    echo "HOME_URL=\"https://github.com/naresh1807/ChakraOS\""
+    echo "SUPPORT_URL=\"https://github.com/naresh1807/ChakraOS\""
+    echo "BUG_REPORT_URL=\"https://github.com/naresh1807/ChakraOS/issues\""
   } >> "$ROOTFS/etc/os-release"
 
   mkdir -p "$ROOTFS/usr/share/doc/chakra-os"
@@ -221,6 +225,15 @@ Debian is a trademark of Software in the Public Interest, Inc.
 See /usr/share/doc/*/copyright for individual package licenses.
 EOF
 
+  # Static login banner (tty + ssh). A short, low-risk branding touch —
+  # plain text, no ANSI codes, so it renders identically everywhere.
+  cat > "$ROOTFS/etc/motd" <<EOF
+
+  Welcome to Chakra OS $CHAKRA_VERSION
+  Built on Debian GNU/Linux ($DEBIAN_SUITE)
+
+EOF
+
   ln -sf /lib/systemd/system/graphical.target "$ROOTFS/etc/systemd/system/default.target"
   chroot "$ROOTFS" systemctl enable NetworkManager sddm >/dev/null 2>&1 || true
 
@@ -228,6 +241,60 @@ EOF
   echo "Asia/Kolkata" > "$ROOTFS/etc/timezone"
   chroot "$ROOTFS" ln -sf /usr/share/zoneinfo/Asia/Kolkata /etc/localtime
   chroot "$ROOTFS" dpkg-reconfigure -f noninteractive tzdata >/dev/null 2>&1 || true
+}
+
+apply_boot_and_login_branding() {
+  # shellcheck disable=SC1090
+  source "$CONFIG_DIR/defaults/user.conf"
+  local assets="$CONFIG_DIR/branding"
+  log "Installing Plymouth boot splash, SDDM background, wallpaper, and neofetch branding..."
+
+  # --- Plymouth boot splash ---
+  if command -v chroot >/dev/null 2>&1 && [[ -d "$assets/plymouth" ]]; then
+    mkdir -p "$ROOTFS/usr/share/plymouth/themes/chakra"
+    cp "$assets/plymouth/"* "$ROOTFS/usr/share/plymouth/themes/chakra/"
+    chroot "$ROOTFS" plymouth-set-default-theme -R chakra \
+      || log "WARNING: plymouth-set-default-theme failed — boot will fall back to the stock splash/text mode."
+  fi
+
+  # --- Desktop wallpaper (installed as a proper wallpaper package dir so it
+  # also shows up named "Chakra OS" in Plasma's wallpaper picker) ---
+  local wp_dir="$ROOTFS/usr/share/wallpapers/ChakraOS/contents/images"
+  mkdir -p "$wp_dir"
+  cp "$assets/wallpaper/wallpaper-1920x1080.png" "$wp_dir/1920x1080.png"
+  cat > "$ROOTFS/usr/share/wallpapers/ChakraOS/metadata.desktop" <<EOF
+[Desktop Entry]
+Name=Chakra OS
+X-KDE-PluginInfo-Name=ChakraOS
+EOF
+
+  # --- SDDM login background (Breeze theme's supported override file) ---
+  mkdir -p "$ROOTFS/usr/share/backgrounds"
+  cp "$assets/sddm/sddm-background-1920x1080.png" "$ROOTFS/usr/share/backgrounds/chakra-sddm-background.png"
+  if [[ -d "$ROOTFS/usr/share/sddm/themes/breeze" ]]; then
+    cat > "$ROOTFS/usr/share/sddm/themes/breeze/theme.conf.user" <<EOF
+[General]
+background=/usr/share/backgrounds/chakra-sddm-background.png
+EOF
+  fi
+  mkdir -p "$ROOTFS/etc/sddm.conf.d"
+  cat > "$ROOTFS/etc/sddm.conf.d/chakra-theme.conf" <<EOF
+[Theme]
+Current=breeze
+EOF
+
+  # --- neofetch: system-wide ascii art + per-user config override.
+  # image_source pointing at a plain text file makes neofetch cat it
+  # directly as the logo (no colors unless the file has raw ANSI codes,
+  # which this one deliberately doesn't, to render identically everywhere). ---
+  mkdir -p "$ROOTFS/usr/share/chakra-os"
+  cp "$assets/neofetch/ascii-logo.txt" "$ROOTFS/usr/share/chakra-os/ascii-logo.txt"
+  local chakra_home="$ROOTFS/home/$CHAKRA_USERNAME"
+  mkdir -p "$chakra_home/.config/neofetch"
+  cat > "$chakra_home/.config/neofetch/config.conf" <<'EOF'
+image_source="/usr/share/chakra-os/ascii-logo.txt"
+EOF
+  chroot "$ROOTFS" chown -R "$CHAKRA_USERNAME:$CHAKRA_USERNAME" "/home/$CHAKRA_USERNAME/.config" 2>/dev/null || true
 }
 
 apply_windows11_theme() {
@@ -307,6 +374,29 @@ apply_windows11_theme() {
   chroot "$ROOTFS" chown -R "$CHAKRA_USERNAME:$CHAKRA_USERNAME" "/home/$CHAKRA_USERNAME/.config"
 
   chroot "$ROOTFS" rm -rf /tmp/theme-build
+
+  # Point the active look-and-feel's own "defaults" file at the Chakra OS
+  # wallpaper, rather than hand-writing the containment/panel layout
+  # ourselves — this is the officially-supported hook Plasma reads when it
+  # self-generates a fresh desktop config, so it doesn't fight with the
+  # "let Plasma regenerate its own stock panel layout" decision above.
+  local wallpaper_file="/usr/share/wallpapers/ChakraOS/contents/images/1920x1080.png"
+  if [[ -n "$lnf_id" && -f "$ROOTFS/usr/share/plasma/look-and-feel/$lnf_id/contents/defaults" && -f "$ROOTFS$wallpaper_file" ]]; then
+    local defaults_file="$ROOTFS/usr/share/plasma/look-and-feel/$lnf_id/contents/defaults"
+    # Strip any override block from a previous run of this same build (this
+    # rootfs persists across rebuilds), then append a fresh one.
+    sed -i '/# --- Chakra OS wallpaper override ---/,/# --- end Chakra OS wallpaper override ---/d' "$defaults_file"
+    {
+      echo ""
+      echo "# --- Chakra OS wallpaper override ---"
+      echo "[Wallpaper][org.kde.image][General]"
+      echo "Image=$wallpaper_file"
+      echo "# --- end Chakra OS wallpaper override ---"
+    } >> "$defaults_file"
+    log "Default wallpaper set via $lnf_id look-and-feel defaults."
+  else
+    log "WARNING: could not locate look-and-feel defaults file — desktop wallpaper will stay at the theme's own default."
+  fi
 }
 
 build_squashfs() {
@@ -361,6 +451,7 @@ main() {
   install_burpsuite
   create_default_user
   apply_branding_and_boot_target
+  apply_boot_and_login_branding
   apply_windows11_theme
   cleanup_mounts
   build_squashfs

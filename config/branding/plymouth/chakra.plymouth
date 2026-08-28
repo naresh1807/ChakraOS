@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Chakra OS
+Description=Chakra OS boot splash - centered logo with an orbiting-dot spinner
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/chakra
+ScriptFile=/usr/share/plymouth/themes/chakra/chakra.script

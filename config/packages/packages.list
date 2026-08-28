@@ -28,6 +28,12 @@ firefox-esr
 qt5-style-kvantum
 qt5-style-kvantum-themes
 
+# Branding polish: boot splash engine + terminal system-info banner.
+# fastfetch is not in Debian bookworm main (verified) — neofetch is,
+# and is still the more universally available choice.
+plymouth
+neofetch
+
 # Networking
 network-manager
 plasma-nm
