@@ -399,6 +399,28 @@ apply_windows11_theme() {
   fi
 }
 
+apply_desktop_icons() {
+  # shellcheck disable=SC1090
+  source "$CONFIG_DIR/defaults/user.conf"
+  log "Adding Windows-style desktop icons (This PC, Recycle Bin, Network, Home, Control Panel)..."
+
+  # Plasma's stock desktop containment is Folder View pointed at ~/Desktop
+  # by default, so dropping .desktop launchers there is enough to make them
+  # show up as icons — no containment/appletsrc surgery needed. Genuinely
+  # unverified until boot-tested, since that default can in principle be
+  # overridden elsewhere in the theme stack.
+  local chakra_home="$ROOTFS/home/$CHAKRA_USERNAME"
+  local desktop_dir="$chakra_home/Desktop"
+  mkdir -p "$desktop_dir"
+  local f name
+  for f in "$CONFIG_DIR/desktop-icons/"*.desktop; do
+    name="$(basename "$f")"
+    sed "s|@@CHAKRA_HOME@@|/home/$CHAKRA_USERNAME|g" "$f" > "$desktop_dir/$name"
+    chmod +x "$desktop_dir/$name"
+  done
+  chroot "$ROOTFS" chown -R "$CHAKRA_USERNAME:$CHAKRA_USERNAME" "/home/$CHAKRA_USERNAME/Desktop"
+}
+
 build_squashfs() {
   log "Building squashfs from rootfs..."
   mkdir -p "$ISO_STAGE/live" "$ISO_STAGE/boot/grub"
@@ -453,6 +475,7 @@ main() {
   apply_branding_and_boot_target
   apply_boot_and_login_branding
   apply_windows11_theme
+  apply_desktop_icons
   cleanup_mounts
   build_squashfs
   stage_kernel_and_grub
