@@ -212,13 +212,23 @@ apply_chakra_core() {
   cp "$PROJECT_ROOT/core/systemd/chakra-core.conf" "$ROOTFS/usr/lib/tmpfiles.d/chakra-core.conf"
 
   # Create them now too, so they exist in the shipped image immediately
-  # rather than only after the first tmpfiles-setup run.
+  # rather than only after the first tmpfiles-setup run. Ownership here
+  # matches the tmpfiles.d declaration above rather than relying on first
+  # boot to reconcile it.
   mkdir -p "$ROOTFS/etc/chakra/policy.d" \
            "$ROOTFS/usr/lib/chakra" \
            "$ROOTFS/usr/share/chakra" \
            "$ROOTFS/var/lib/chakra" \
            "$ROOTFS/var/log/chakra"
   chmod 0750 "$ROOTFS/var/lib/chakra" "$ROOTFS/var/log/chakra"
+  chroot "$ROOTFS" chown root:adm /var/log/chakra || true
+
+  # This rootfs persists across rebuilds (build/rootfs is only wiped with
+  # --clean). An earlier build wrote the neofetch ascii art to an ad hoc
+  # /usr/share/chakra-os/ path before /usr/share/chakra/ was the
+  # established chakra-core location -- remove that leftover so it
+  # doesn't ship as orphaned, unreferenced cruft alongside the real one.
+  rm -rf "$ROOTFS/usr/share/chakra-os"
 
   # Chakra's own machine-readable identity file -- distinct from
   # /etc/os-release, for future chakra-* tools to read directly.
@@ -247,14 +257,21 @@ apply_branding_and_boot_target() {
     -e 's/^PRETTY_NAME=.*/PRETTY_NAME="Chakra OS '"$CHAKRA_VERSION"'"/' \
     -e 's/^NAME=.*/NAME="Chakra OS"/' \
     "$ROOTFS/etc/os-release"
+  # This rootfs persists across rebuilds -- strip any block appended by an
+  # earlier run before appending the current one, so os-release doesn't
+  # grow a duplicate copy of these lines on every rebuild.
+  sed -i '/# --- Chakra OS os-release fields ---/,/# --- end Chakra OS os-release fields ---/d' "$ROOTFS/etc/os-release"
   {
     echo ""
+    echo "# --- Chakra OS os-release fields ---"
     echo "CHAKRA_VERSION=$CHAKRA_VERSION"
+    echo "CHAKRA_CODENAME=\"Sudarshana\""
     echo "CHAKRA_BASE=\"Debian GNU/Linux $DEBIAN_SUITE\""
     echo "ANSI_COLOR=\"0;38;5;33\""
     echo "HOME_URL=\"https://github.com/naresh1807/ChakraOS\""
     echo "SUPPORT_URL=\"https://github.com/naresh1807/ChakraOS\""
     echo "BUG_REPORT_URL=\"https://github.com/naresh1807/ChakraOS/issues\""
+    echo "# --- end Chakra OS os-release fields ---"
   } >> "$ROOTFS/etc/os-release"
 
   mkdir -p "$ROOTFS/usr/share/doc/chakra-os"
