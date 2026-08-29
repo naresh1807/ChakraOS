@@ -251,6 +251,32 @@ EOF
   chmod 644 "$ROOTFS/etc/profile.d/chakra.sh"
 }
 
+apply_security_substrate() {
+  log "Installing security substrate (firewall, kernel hardening, audit, policy schema)..."
+  local sec_cfg="$PROJECT_ROOT/core/security"
+
+  # Firewall: default-deny inbound, permissive outbound (see the
+  # ruleset's own comments for why -- this is a pentesting OS).
+  cp "$sec_cfg/nftables.conf" "$ROOTFS/etc/nftables.conf"
+  chroot "$ROOTFS" systemctl enable nftables >/dev/null 2>&1 || true
+
+  # Kernel/network hardening -- deliberately excludes ptrace_scope; see
+  # the file's own comment for why.
+  mkdir -p "$ROOTFS/etc/sysctl.d"
+  cp "$sec_cfg/sysctl-hardening.conf" "$ROOTFS/etc/sysctl.d/60-chakra-hardening.conf"
+
+  # OS-level audit trail (auditd). The higher-level "Chakra Audit"
+  # JSON-schema trail from the master manual is future work once
+  # Sentinel/the Policy Engine actually produce decisions worth logging
+  # -- this is the underlying log those would sit alongside.
+  chroot "$ROOTFS" systemctl enable auditd >/dev/null 2>&1 || true
+
+  # Policy schema foundation -- not yet enforced by anything; see
+  # core/policies/README.md for why this is schema-only for now.
+  mkdir -p "$ROOTFS/etc/chakra/policy.d"
+  cp "$PROJECT_ROOT/core/policies/examples/"*.json "$ROOTFS/etc/chakra/policy.d/" 2>/dev/null || true
+}
+
 apply_branding_and_boot_target() {
   log "Applying Chakra OS branding and boot target..."
   sed -i \
@@ -681,6 +707,7 @@ main() {
   install_burpsuite
   create_default_user
   apply_chakra_core
+  apply_security_substrate
   apply_branding_and_boot_target
   apply_boot_and_login_branding
   apply_windows11_theme

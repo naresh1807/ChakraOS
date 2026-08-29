@@ -1,0 +1,17 @@
+{
+  "id": "usb-storage-unknown",
+  "description": "An unknown (never-seen-before) USB storage device is connected",
+  "resource": "device.usb.storage",
+  "condition": "device.trusted == false",
+  "risk_tier": 2,
+  "modes": {
+    "lockdown": "block",
+    "daily": "ask",
+    "developer": "ask",
+    "privacy": "block",
+    "defense": "ask",
+    "security-lab": "allow",
+    "forensics": "allow",
+    "system-admin": "ask"
+  }
+}

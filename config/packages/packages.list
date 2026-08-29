@@ -38,6 +38,10 @@ neofetch
 network-manager
 plasma-nm
 
+# Phase 5: security substrate (firewall + audit trail).
+nftables
+auditd
+
 # Audio foundation
 pipewire
 pipewire-pulse
