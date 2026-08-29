@@ -11,13 +11,14 @@ Phases are ordered by dependency, not just topic — each phase only depends on 
 
 - **Phase 5 — Security substrate.** nftables firewall (default-deny inbound, permissive outbound — this is a pentesting OS), kernel/network hardening (deliberately excludes `ptrace_scope`, since gdb/strace/ltrace need it), `auditd` for OS-level audit logging, and a Policy Engine *schema* (JSON, risk-tiered, one worked example) — explicitly not a running engine yet, since nothing (Sentinel, AppGuard) exists to consume its decisions. Secure Boot/TPM/disk encryption deferred to when there's an installer and an actual persistent disk to protect. Boot-verified: `nft list ruleset` and `systemctl status auditd` both confirmed matching what was built. → `core/security/`, `core/policies/`
 
+- **Phase 6 — Read-only observability apps.** Five real, callable "Chakra system API" CLI tools (`chakra-health`, `chakra-processlens`, `chakra-loglens`, `chakra-devicewatch`, `chakra-netguard`, each supporting `--json`) plus a `dialog`-based TUI Command Center tying them together, reachable from a new "Chakra Tools" Start menu section. Deliberately CLI/TUI, not a real GUI (see `core/dashboard/README.md`) — that's a materially larger, separate undertaking. This *is* the API surface Sentinel (Phase 7) calls, not a placeholder for it. → `core/dashboard/`
+
 ## In progress
 
-- **Phase 6 — Read-only observability apps.** Five real, callable "Chakra system API" CLI tools (`chakra-health`, `chakra-processlens`, `chakra-loglens`, `chakra-devicewatch`, `chakra-netguard`, each supporting `--json`) plus a `dialog`-based TUI Command Center tying them together, reachable from a new "Chakra Tools" Start menu section. Deliberately CLI/TUI, not a real GUI (see `core/dashboard/README.md`) — that's a materially larger, separate undertaking. This *is* the API surface Sentinel (Phase 7) will call, not a placeholder for it. → `core/dashboard/`
+- **Phase 7 — Chakra Sentinel, read-only mode.** `chakra-sentinel`: a deterministic keyword-matching Intent Engine routing questions to the Phase 6 tools, every dispatch logged via `chakra-audit-log` (the first real Chakra Audit implementation — Phase 5 deferred this until something existed to log). NVIDIA NIM available as an *optional* explain-layer upgrade (off by default, never in the decision path — see `ai-agent/README.md`), not a replacement for the real local-first LLM the manual describes, which remains a separate future phase. Routing verified against every example query the master manual itself uses. → `ai-agent/`
 
 ## Planned
 
-- **Phase 7 — Chakra Sentinel, read-only mode.** The AI agent: local-first runtime, tool system, memory — scoped to Risk 0 only (answer questions, explain logs, analyze) until Phase 8 exists. → `ai-agent/`
 - **Phase 8 — Permission & privacy enforcement.** AppGuard, USB Guard, Privacy Center, Vault, Sandbox, File Inspector. → `privacy/`, `isolation/`
 - **Phase 9 — Active defense: Chakra Shield.** Shield + Security Score, built on Phase 6's observability and Phase 8's enforcement. → `security-workspace/`
 - **Phase 10 — Developer tooling suite.** DevHub, Env Manager, Port Watch, API Watch, Container Center. No AI/policy dependency — could run in parallel with 6–9. → `developer-tools/`
