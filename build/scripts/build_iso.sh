@@ -454,6 +454,26 @@ apply_windows11_theme() {
   else
     log "WARNING: could not locate look-and-feel defaults file — desktop wallpaper will stay at the theme's own default."
   fi
+
+  # The defaults-file hook above turned out NOT to be sufficient on its
+  # own (confirmed by boot-testing: the desktop still showed
+  # Fluent-kde's own bundled wallpaper package, not ours). Fluent-kde
+  # ships its own wallpaper package name-matched to the look-and-feel
+  # (e.g. /usr/share/wallpapers/Fluent-round-dark/contents/images/3840x2160.png)
+  # which takes precedence over the generic defaults hook. Fix: overwrite
+  # that package's actual image file with ours directly, so whatever
+  # mechanism is already correctly finding and displaying it shows our
+  # design instead -- sidesteps needing to know the exact selection logic.
+  local wp_pkg_dir wp_src_4k="$CONFIG_DIR/branding/wallpaper/wallpaper-3840x2160.png"
+  for wp_pkg_dir in "$ROOTFS/usr/share/wallpapers/"Fluent*; do
+    [[ -d "$wp_pkg_dir/contents/images" ]] || continue
+    local img
+    for img in "$wp_pkg_dir/contents/images/"*.png; do
+      [[ -f "$img" ]] || continue
+      cp "$wp_src_4k" "$img"
+    done
+    log "Overwrote bundled wallpaper images in $(basename "$wp_pkg_dir") with the Chakra wallpaper."
+  done
 }
 
 apply_desktop_icons() {
