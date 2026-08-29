@@ -523,6 +523,92 @@ Categories=System;TerminalEmulator;
 EOF
 }
 
+apply_security_menu() {
+  log "Building Kali-style categorized security tools menu..."
+  local menu_cfg="$PROJECT_ROOT/config/security-menu"
+  local apps_dir="$ROOTFS/usr/share/applications"
+  local dirs_dir="$ROOTFS/usr/share/desktop-directories"
+  local merged_dir="$ROOTFS/etc/xdg/menus/applications-merged"
+  mkdir -p "$apps_dir" "$dirs_dir" "$merged_dir"
+
+  # Root menu structure: a "Security Tools" submenu with 10 numbered
+  # categories, merged in via the standard XDG <DefaultMergeDirs/>
+  # mechanism rather than editing the system's own root menu file.
+  cp "$menu_cfg/chakra-security-tools.directory" "$dirs_dir/"
+  cp "$menu_cfg/chakra-security-tools.menu" "$merged_dir/"
+
+  # Per-category .directory files, generated from categories.list so
+  # adding a category later is a one-line data change, not new code.
+  local id name icon
+  while IFS='|' read -r id name icon; do
+    [[ -z "$id" || "$id" == \#* ]] && continue
+    cat > "$dirs_dir/chakra-$id.directory" <<EOF
+[Desktop Entry]
+Type=Directory
+Name=$name
+Icon=$icon
+EOF
+  done < "$menu_cfg/categories.list"
+
+  # Per-tool launchers, generated from tools.list. Same explicit
+  # "konsole -e bash -c ..." + Terminal=false pattern already proven to
+  # work for the Terminal (Admin) entry above, rather than Terminal=true
+  # (which depends on KDE's default-terminal-app resolution actually
+  # landing on Konsole -- one less unproven variable across ~50 new files).
+  local tname cat exec_cmd needs_root safe_id run_cmd
+  while IFS='|' read -r tname cat exec_cmd needs_root; do
+    [[ -z "$tname" || "$tname" == \#* ]] && continue
+    safe_id="$(echo "$tname" | tr -c 'a-zA-Z0-9' '-' | tr -s '-')"
+    run_cmd="$exec_cmd"
+    [[ "$needs_root" == "1" ]] && run_cmd="sudo $exec_cmd"
+    cat > "$apps_dir/chakra-tool-$safe_id.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=$tname
+Icon=utilities-terminal
+Exec=konsole -e bash -c "$run_cmd; echo; echo '--- press Enter to close ---'; read"
+Terminal=false
+Categories=X-Chakra-$cat;
+EOF
+  done < "$menu_cfg/tools.list"
+
+  # Burp Suite is a GUI app with no Debian-provided .desktop file.
+  if [[ -x "$ROOTFS/usr/local/bin/burpsuite" ]]; then
+    cat > "$apps_dir/chakra-tool-burpsuite.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Burp Suite
+Icon=utilities-terminal
+Exec=burpsuite
+Terminal=false
+Categories=X-Chakra-03-web-app-analysis;
+EOF
+  fi
+
+  # Tools that already ship their own GUI .desktop file: add our category
+  # to it rather than creating a duplicate entry with a different
+  # desktop-file-id. Discovered by pattern, not hardcoded, since the
+  # exact filename/providing sub-package can vary (e.g. Wireshark's GUI
+  # comes from wireshark-qt, not the wireshark package itself).
+  _chakra_add_category() {
+    local file="$1" cat="$2"
+    [[ -f "$file" ]] || return 0
+    grep -q "X-Chakra-$cat" "$file" && return 0
+    if grep -q "^Categories=" "$file"; then
+      sed -i "s/^Categories=/Categories=X-Chakra-$cat;/" "$file"
+    else
+      echo "Categories=X-Chakra-$cat;" >> "$file"
+    fi
+  }
+  local f
+  for f in $(ls "$apps_dir" 2>/dev/null | grep -i wireshark); do
+    _chakra_add_category "$apps_dir/$f" "07-sniffing-spoofing"
+  done
+  _chakra_add_category "$apps_dir/ettercap.desktop" "07-sniffing-spoofing"
+  _chakra_add_category "$apps_dir/guymager.desktop" "08-forensics"
+  unset -f _chakra_add_category
+}
+
 build_squashfs() {
   log "Building squashfs from rootfs..."
   mkdir -p "$ISO_STAGE/live" "$ISO_STAGE/boot/grub"
@@ -580,6 +666,7 @@ main() {
   apply_windows11_theme
   apply_desktop_icons
   apply_friendly_app_names
+  apply_security_menu
   cleanup_mounts
   build_squashfs
   stage_kernel_and_grub

@@ -1,0 +1,72 @@
+<!DOCTYPE Menu PUBLIC "-//freedesktop//DTD Menu 1.0//EN"
+ "http://www.freedesktop.org/standards/menu-spec/menu-1.0.dtd">
+<!--
+  Chakra OS Kali-style categorized security tools menu.
+  Merged into the root application menu via the standard XDG
+  DefaultMergeDirs mechanism: installed to
+  /etc/xdg/menus/applications-merged/, not by editing the root menu file
+  directly, so it survives package updates to the base menu.
+  Category ids here must match config/security-menu/categories.list and
+  the Categories lines apply_security_menu() writes into each tool's
+  .desktop file.
+-->
+<Menu>
+  <Name>Applications</Name>
+  <Menu>
+    <Name>ChakraSecurityTools</Name>
+    <Directory>chakra-security-tools.directory</Directory>
+    <Include>
+      <Category>X-Chakra-SecurityTools</Category>
+    </Include>
+    <Menu>
+      <Name>Chakra-01-info-gathering</Name>
+      <Directory>chakra-01-info-gathering.directory</Directory>
+      <Include><Category>X-Chakra-01-info-gathering</Category></Include>
+    </Menu>
+    <Menu>
+      <Name>Chakra-02-vuln-analysis</Name>
+      <Directory>chakra-02-vuln-analysis.directory</Directory>
+      <Include><Category>X-Chakra-02-vuln-analysis</Category></Include>
+    </Menu>
+    <Menu>
+      <Name>Chakra-03-web-app-analysis</Name>
+      <Directory>chakra-03-web-app-analysis.directory</Directory>
+      <Include><Category>X-Chakra-03-web-app-analysis</Category></Include>
+    </Menu>
+    <Menu>
+      <Name>Chakra-04-password-attacks</Name>
+      <Directory>chakra-04-password-attacks.directory</Directory>
+      <Include><Category>X-Chakra-04-password-attacks</Category></Include>
+    </Menu>
+    <Menu>
+      <Name>Chakra-05-wireless-attacks</Name>
+      <Directory>chakra-05-wireless-attacks.directory</Directory>
+      <Include><Category>X-Chakra-05-wireless-attacks</Category></Include>
+    </Menu>
+    <Menu>
+      <Name>Chakra-06-exploitation-tools</Name>
+      <Directory>chakra-06-exploitation-tools.directory</Directory>
+      <Include><Category>X-Chakra-06-exploitation-tools</Category></Include>
+    </Menu>
+    <Menu>
+      <Name>Chakra-07-sniffing-spoofing</Name>
+      <Directory>chakra-07-sniffing-spoofing.directory</Directory>
+      <Include><Category>X-Chakra-07-sniffing-spoofing</Category></Include>
+    </Menu>
+    <Menu>
+      <Name>Chakra-08-forensics</Name>
+      <Directory>chakra-08-forensics.directory</Directory>
+      <Include><Category>X-Chakra-08-forensics</Category></Include>
+    </Menu>
+    <Menu>
+      <Name>Chakra-09-reverse-engineering</Name>
+      <Directory>chakra-09-reverse-engineering.directory</Directory>
+      <Include><Category>X-Chakra-09-reverse-engineering</Category></Include>
+    </Menu>
+    <Menu>
+      <Name>Chakra-10-network-monitoring</Name>
+      <Directory>chakra-10-network-monitoring.directory</Directory>
+      <Include><Category>X-Chakra-10-network-monitoring</Category></Include>
+    </Menu>
+  </Menu>
+</Menu>

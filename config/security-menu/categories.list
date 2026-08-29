@@ -1,0 +1,12 @@
+# Chakra OS security tools menu categories (Kali-style numbered grouping).
+# id|display name|icon
+01-info-gathering|01 - Information Gathering|edit-find
+02-vuln-analysis|02 - Vulnerability Analysis|dialog-warning
+03-web-app-analysis|03 - Web Application Analysis|applications-internet
+04-password-attacks|04 - Password Attacks|dialog-password
+05-wireless-attacks|05 - Wireless Attacks|network-wireless
+06-exploitation-tools|06 - Exploitation Tools|utilities-terminal
+07-sniffing-spoofing|07 - Sniffing & Spoofing|network-transmit-receive
+08-forensics|08 - Forensics|drive-harddisk
+09-reverse-engineering|09 - Reverse Engineering|applications-development
+10-network-monitoring|10 - Network Monitoring|network-workgroup

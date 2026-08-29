@@ -1,0 +1,74 @@
+# Chakra OS security tools menu -- one launcher per line.
+# Name|category_id|exec command|needs_root(0/1)
+# Launches in a terminal (Terminal=true) unless the tool has its own GUI,
+# in which case it's handled separately in apply_security_menu() by
+# recategorizing the package's own .desktop file instead of duplicating it.
+
+# 01 - Information Gathering
+Nmap|01-info-gathering|nmap|0
+Whois|01-info-gathering|whois|0
+Recon-ng|01-info-gathering|recon-ng|0
+Netdiscover|01-info-gathering|netdiscover|1
+Arp-scan|01-info-gathering|arp-scan|1
+DNS Lookup (dig)|01-info-gathering|dig|0
+
+# 02 - Vulnerability Analysis
+Nikto|02-vuln-analysis|nikto|0
+WhatWeb|02-vuln-analysis|whatweb|0
+
+# 03 - Web Application Analysis
+SQLmap|03-web-app-analysis|sqlmap|0
+Dirb|03-web-app-analysis|dirb|0
+Gobuster|03-web-app-analysis|gobuster|0
+FFUF|03-web-app-analysis|ffuf|0
+Wapiti|03-web-app-analysis|wapiti|0
+
+# 04 - Password Attacks
+Hydra|04-password-attacks|hydra|0
+John the Ripper|04-password-attacks|john|0
+Hashcat|04-password-attacks|hashcat|0
+Crunch|04-password-attacks|crunch|0
+CeWL|04-password-attacks|cewl|0
+Medusa|04-password-attacks|medusa|0
+
+# 05 - Wireless Attacks
+Aircrack-ng|05-wireless-attacks|aircrack-ng|0
+Airmon-ng|05-wireless-attacks|airmon-ng|1
+Airodump-ng|05-wireless-attacks|airodump-ng|1
+Reaver|05-wireless-attacks|reaver|1
+Wifite|05-wireless-attacks|wifite|1
+
+# 06 - Exploitation Tools
+Metasploit Framework|06-exploitation-tools|msfconsole|0
+
+# 07 - Sniffing & Spoofing
+tcpdump|07-sniffing-spoofing|tcpdump|1
+Masscan|07-sniffing-spoofing|masscan|1
+
+# 08 - Forensics
+Autopsy|08-forensics|autopsy|0
+TestDisk|08-forensics|testdisk|0
+Foremost|08-forensics|foremost|0
+Binwalk|08-forensics|binwalk|0
+Extundelete|08-forensics|extundelete|1
+Scalpel|08-forensics|scalpel|0
+GNU ddrescue|08-forensics|ddrescue|0
+Hashdeep|08-forensics|hashdeep|0
+ewfacquire|08-forensics|ewfacquire|0
+ExifTool|08-forensics|exiftool|0
+Steghide|08-forensics|steghide|0
+Outguess|08-forensics|outguess|0
+ClamAV Scan|08-forensics|clamscan|0
+YARA|08-forensics|yara|0
+ssdeep|08-forensics|ssdeep|0
+
+# 09 - Reverse Engineering
+GDB|09-reverse-engineering|gdb|0
+strace|09-reverse-engineering|strace|0
+ltrace|09-reverse-engineering|ltrace|0
+checksec|09-reverse-engineering|checksec|0
+
+# 10 - Network Monitoring
+iftop|10-network-monitoring|iftop|1
+nethogs|10-network-monitoring|nethogs|1
+vnstat|10-network-monitoring|vnstat|0
