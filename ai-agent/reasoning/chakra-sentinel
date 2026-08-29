@@ -1,0 +1,128 @@
+#!/bin/bash
+# chakra-sentinel -- Chakra OS's system agent, Phase 7 (read-only mode).
+#
+# Architecture (matches the master manual's AI safety principle exactly):
+#   query -> Intent Engine (deterministic pattern match, this script)
+#          -> Chakra system API (one of the Phase 6 tools, Risk 0 only)
+#          -> Chakra Audit (every dispatch logged)
+#          -> [optional] NVIDIA NIM explains the ALREADY-COLLECTED output
+#
+# The "AI" (NIM), when configured, NEVER decides which tool runs or
+# touches the system directly -- it only ever sees data the
+# deterministic dispatcher already fetched. Without NIM configured,
+# Sentinel is fully offline and still fully functional; NIM only adds
+# a plain-language explanation layer on top. See
+# /etc/chakra/sentinel.conf and ai-agent/README.md for the reasoning.
+#
+# Usage:
+#   chakra-sentinel "why is my system slow?"
+#   chakra-sentinel                # interactive mode
+set -u
+
+BIN=/usr/lib/chakra/bin
+CONF=/etc/chakra/sentinel.conf
+MODE="${CHAKRA_SENTINEL_MODE:-daily}"
+
+NIM_API_KEY=""
+NIM_MODEL="meta/llama-3.1-8b-instruct"
+NIM_BASE_URL="https://integrate.api.nvidia.com/v1"
+# shellcheck disable=SC1090
+[[ -f "$CONF" ]] && source "$CONF" 2>/dev/null
+
+audit() {
+  "$BIN/chakra-audit-log" --actor "chakra-sentinel" --action "$1" \
+    --target "localhost" --risk-tier 0 --approved-by "auto (risk-0, mode=$MODE)" \
+    --result "$2" 2>/dev/null
+}
+
+# NIM explain layer -- only called if NIM_API_KEY is set. Takes the
+# original question and the tool's raw output; returns a plain-language
+# explanation, or empty on any failure (caller falls back to raw output).
+nim_explain() {
+  local question="$1" tool_output="$2"
+  [[ -z "$NIM_API_KEY" ]] && return 1
+  command -v curl >/dev/null 2>&1 || return 1
+  local body resp
+  body=$(jq -n --arg model "$NIM_MODEL" --arg q "$question" --arg data "$tool_output" '
+    {model:$model, max_tokens:300, temperature:0.3, messages:[
+      {role:"system", content:"You are Chakra Sentinel, a system assistant. You are given the ALREADY-COLLECTED output of a read-only system command. Explain it clearly and briefly for the user. Do not invent data not present in the output. Do not suggest running commands that were not already run."},
+      {role:"user", content:("Question: " + $q + "\n\nCommand output:\n" + $data)}
+    ]}')
+  resp=$(curl -sS --max-time 15 -X POST "$NIM_BASE_URL/chat/completions" \
+    -H "Authorization: Bearer $NIM_API_KEY" -H "Content-Type: application/json" \
+    -d "$body" 2>/dev/null)
+  local text
+  text=$(echo "$resp" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+  [[ -z "$text" ]] && return 1
+  echo "$text"
+  return 0
+}
+
+# Intent Engine: deterministic keyword routing. Not a language model --
+# see ai-agent/README.md for why that's the honest, correct scope here.
+dispatch() {
+  local q="${1,,}"  # lowercase
+  local action tool_cmd output
+
+  if [[ "$q" =~ (slow|performance|why.*lag|sluggish) ]]; then
+    action="system.read_health+processes"
+    output="$("$BIN/chakra-health"; echo; "$BIN/chakra-processlens")"
+  elif [[ "$q" =~ (ram|memory|consuming|which app) ]]; then
+    action="system.read_processes"
+    output="$("$BIN/chakra-processlens")"
+  elif [[ "$q" =~ (network|connection|listening|port) ]]; then
+    action="network.read_connections"
+    output="$("$BIN/chakra-netguard")"
+  elif [[ "$q" =~ (update|upgrade|patch) ]]; then
+    action="system.read_updates"
+    output="$("$BIN/chakra-health")"
+  elif [[ "$q" =~ (security|threat|problem|suspicious|breach) ]]; then
+    action="security.read_audit_log"
+    output="$("$BIN/chakra-loglens" --source security)"
+  elif [[ "$q" =~ (device|usb|bluetooth|hardware|plugged) ]]; then
+    action="device.read_inventory"
+    output="$("$BIN/chakra-devicewatch")"
+  elif [[ "$q" =~ (log|error|journal) ]]; then
+    action="system.read_logs"
+    output="$("$BIN/chakra-loglens")"
+  elif [[ "$q" =~ (health|status|how.*system) ]]; then
+    action="system.read_health"
+    output="$("$BIN/chakra-health")"
+  else
+    audit "intent.unmatched" "no_match"
+    echo "Sentinel (offline mode) doesn't recognize that yet -- it only routes to known, read-only Chakra system APIs, not open-ended questions."
+    echo "Try asking about: system health, processes/memory, network connections, updates, security/logs, or connected devices."
+    return 1
+  fi
+
+  audit "$action" "success"
+
+  if [[ -n "$NIM_API_KEY" ]]; then
+    local explained
+    if explained="$(nim_explain "$1" "$output")"; then
+      echo "$explained"
+      echo
+      echo "--- raw data ---"
+      echo "$output"
+      return 0
+    fi
+    echo "(NVIDIA NIM configured but unreachable -- showing raw data.)"
+    echo
+  fi
+  echo "$output"
+}
+
+if [[ $# -gt 0 ]]; then
+  dispatch "$*"
+else
+  echo "Chakra Sentinel -- read-only mode (Risk tier 0 only). Type 'exit' to quit."
+  [[ -n "$NIM_API_KEY" ]] && echo "NVIDIA NIM: configured" || echo "NVIDIA NIM: not configured (offline pattern-matching only -- see /etc/chakra/sentinel.conf)"
+  echo
+  while true; do
+    read -r -p "sentinel> " query || break
+    [[ "$query" =~ ^(exit|quit)$ ]] && break
+    [[ -z "$query" ]] && continue
+    dispatch "$query"
+    echo
+  done
+fi

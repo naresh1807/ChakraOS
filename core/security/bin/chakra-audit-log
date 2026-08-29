@@ -1,0 +1,45 @@
+#!/bin/bash
+# chakra-audit-log -- append one structured record to the Chakra Audit
+# trail. This is the real implementation of the exact example in the
+# master manual's Chakra Audit section: {actor, action, target,
+# risk_tier, approved_by, result}, one JSON object per line
+# (JSON-Lines) so it can be tailed/grepped/parsed without a full-file
+# reparse on every write.
+#
+# Usage:
+#   chakra-audit-log --actor A --action B --target C --risk-tier N \
+#                     --approved-by D --result E
+set -u
+
+LOG_DIR="/var/log/chakra/audit"
+LOG_FILE="$LOG_DIR/sentinel.jsonl"
+mkdir -p "$LOG_DIR" 2>/dev/null
+chmod 0750 "$LOG_DIR" 2>/dev/null
+
+actor="" action="" target="" risk_tier="" approved_by="" result=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --actor) actor="$2"; shift 2 ;;
+    --action) action="$2"; shift 2 ;;
+    --target) target="$2"; shift 2 ;;
+    --risk-tier) risk_tier="$2"; shift 2 ;;
+    --approved-by) approved_by="$2"; shift 2 ;;
+    --result) result="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+if command -v jq >/dev/null 2>&1; then
+  jq -nc \
+    --arg ts "$ts" --arg actor "$actor" --arg action "$action" \
+    --arg target "$target" --arg risk_tier "$risk_tier" \
+    --arg approved_by "$approved_by" --arg result "$result" \
+    '{timestamp:$ts,actor:$actor,action:$action,target:$target,risk_tier:($risk_tier|tonumber? // $risk_tier),approved_by:$approved_by,result:$result}' \
+    >> "$LOG_FILE" 2>/dev/null
+else
+  # jq should always be present (Phase 6 dependency) but degrade gracefully.
+  printf '{"timestamp":"%s","actor":"%s","action":"%s","target":"%s","risk_tier":"%s","approved_by":"%s","result":"%s"}\n' \
+    "$ts" "$actor" "$action" "$target" "$risk_tier" "$approved_by" "$result" >> "$LOG_FILE" 2>/dev/null
+fi

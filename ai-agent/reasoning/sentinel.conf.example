@@ -1,0 +1,23 @@
+# Chakra Sentinel configuration. Installed to /etc/chakra/sentinel.conf.
+#
+# Sentinel works fully offline out of the box: a deterministic
+# pattern-matching Intent Engine routes your question to one of the
+# Chakra system API tools (chakra-health, chakra-processlens, etc.),
+# runs it, and shows you the result. No setup, no internet, no API key.
+#
+# NVIDIA NIM integration is OPTIONAL and OFF by default. If you set
+# NIM_API_KEY below, Sentinel additionally sends the ALREADY-COLLECTED
+# tool output to NVIDIA's hosted API and asks it to explain the result
+# in plainer language. The AI never decides which tool to run or gets
+# raw system access -- it only ever sees data the deterministic,
+# Risk-0-only dispatcher already fetched. This matches the master
+# manual's own AI safety principle: AI -> Structured Intent -> Policy
+# Validator -> Approved Chakra API, never AI -> raw shell.
+#
+# Get a free API key at https://build.nvidia.com (NVIDIA account
+# required). Queries sent to NIM leave this machine -- if that's not
+# acceptable for your use, just leave NIM_API_KEY blank.
+
+NIM_API_KEY=
+NIM_MODEL=meta/llama-3.1-8b-instruct
+NIM_BASE_URL=https://integrate.api.nvidia.com/v1

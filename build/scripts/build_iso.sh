@@ -698,6 +698,37 @@ EOF
   done < "$menu_cfg/tools.list"
 }
 
+apply_chakra_sentinel() {
+  log "Installing Chakra Sentinel (Phase 7, read-only mode)..."
+  local bin_dir="$ROOTFS/usr/lib/chakra/bin"
+  local apps_dir="$ROOTFS/usr/share/applications"
+  mkdir -p "$bin_dir" "$apps_dir" "$ROOTFS/etc/chakra"
+
+  # Audit writer (core/security/) + the Sentinel dispatcher itself
+  # (ai-agent/reasoning/) both land in the same canonical chakra-core
+  # bin path used by the Phase 6 tools they call.
+  cp "$PROJECT_ROOT/core/security/bin/chakra-audit-log" "$bin_dir/chakra-audit-log"
+  cp "$PROJECT_ROOT/ai-agent/reasoning/chakra-sentinel" "$bin_dir/chakra-sentinel"
+  chmod +x "$bin_dir/chakra-audit-log" "$bin_dir/chakra-sentinel"
+  ln -sf /usr/lib/chakra/bin/chakra-audit-log "$ROOTFS/usr/local/bin/chakra-audit-log"
+  ln -sf /usr/lib/chakra/bin/chakra-sentinel "$ROOTFS/usr/local/bin/chakra-sentinel"
+
+  # NVIDIA NIM stays off (blank key) unless the user edits this
+  # themselves -- see ai-agent/README.md for why that's deliberate.
+  cp "$PROJECT_ROOT/ai-agent/reasoning/sentinel.conf.example" "$ROOTFS/etc/chakra/sentinel.conf"
+
+  cat > "$apps_dir/chakra-tool-dash-Chakra-Sentinel.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Chakra Sentinel
+Comment=Ask about system health, processes, network, updates, security, or devices
+Icon=utilities-system-monitor
+Exec=konsole -e chakra-sentinel
+Terminal=false
+Categories=X-Chakra-Tools;
+EOF
+}
+
 build_squashfs() {
   log "Building squashfs from rootfs..."
   mkdir -p "$ISO_STAGE/live" "$ISO_STAGE/boot/grub"
@@ -758,6 +789,7 @@ main() {
   apply_friendly_app_names
   apply_security_menu
   apply_chakra_tools
+  apply_chakra_sentinel
   cleanup_mounts
   build_squashfs
   stage_kernel_and_grub
