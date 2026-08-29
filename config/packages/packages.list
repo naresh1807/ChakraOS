@@ -48,6 +48,11 @@ lm-sensors
 smartmontools
 jq
 
+# Phase 8: permission & privacy enforcement.
+usbguard
+cryptsetup
+firejail
+
 # Audio foundation
 pipewire
 pipewire-pulse

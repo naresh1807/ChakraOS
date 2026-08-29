@@ -1,0 +1,23 @@
+[Unit]
+Description=Chakra USB Guard bootstrap (generate policy from currently-connected devices)
+Documentation=man:usbguard(1)
+Before=usbguard.service
+DefaultDependencies=no
+After=local-fs.target
+
+[Service]
+Type=oneshot
+# Live-boot means every boot is effectively a "new machine" from
+# usbguard's perspective -- there's no persistent device history to
+# build a policy from over time. So: allow whatever's actually
+# connected at boot (keyboard, mouse, installer media, etc. -- the
+# safe, standard usbguard bootstrapping method for an unknown-inventory
+# system), then anything plugged in AFTER boot falls through to the
+# daemon's own (block-by-default) implicit policy. See
+# core/security/usbguard/README.md for the mapping to
+# /etc/chakra/policy.d/usb-storage.policy.json.
+ExecStart=/bin/sh -c 'usbguard generate-policy > /etc/usbguard/rules.conf 2>/dev/null || true'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

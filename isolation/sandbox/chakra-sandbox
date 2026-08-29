@@ -1,0 +1,32 @@
+#!/bin/bash
+# chakra-sandbox -- run a command isolated via firejail (a real,
+# established namespace-sandboxing tool, not a custom reimplementation).
+# Restricted filesystem + restricted network, matching the master
+# manual's own description of what a sandbox should restrict.
+#
+# Usage: chakra-sandbox <command> [args...]
+set -u
+
+if ! command -v firejail >/dev/null 2>&1; then
+  echo "firejail not installed." >&2
+  exit 1
+fi
+
+if [[ $# -eq 0 ]]; then
+  echo "Usage: chakra-sandbox <command> [args...]"
+  echo "Runs <command> with a private filesystem and no network access."
+  echo "Need network inside the sandbox? Run firejail directly with your own flags --"
+  echo "this wrapper is the safe-default convenience case, not the only way to use it."
+  exit 1
+fi
+
+# chakra-sandbox normally runs as the unprivileged desktop user, so this
+# audit append relies on that user being in the adm group (chakra-core
+# makes /var/log/chakra/audit 2770 root:adm for exactly this). If it
+# can't write, chakra-audit-log reports it on stderr -- don't hide that,
+# but don't block the sandbox launch on it either.
+command -v chakra-audit-log >/dev/null 2>&1 && \
+  chakra-audit-log --actor "chakra-sandbox" --action "sandbox.run" --target "$1" \
+    --risk-tier 1 --approved-by "user (direct invocation)" --result "started" || true
+
+exec firejail --quiet --private --net=none -- "$@"

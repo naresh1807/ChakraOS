@@ -729,6 +729,49 @@ Categories=X-Chakra-Tools;
 EOF
 }
 
+apply_permission_enforcement() {
+  log "Installing permission & privacy enforcement (Phase 8: USB Guard, Vault, File Inspector, Sandbox)..."
+  local sec_cfg="$PROJECT_ROOT/core/security"
+  local bin_dir="$ROOTFS/usr/lib/chakra/bin"
+  local apps_dir="$ROOTFS/usr/share/applications"
+  mkdir -p "$bin_dir" "$apps_dir" "$ROOTFS/etc/usbguard"
+
+  # Real CLI tools: Vault (LUKS2), File Inspector, Sandbox (firejail wrapper).
+  cp "$sec_cfg/bin/chakra-vault" "$bin_dir/chakra-vault"
+  cp "$sec_cfg/bin/chakra-file-inspector" "$bin_dir/chakra-file-inspector"
+  cp "$PROJECT_ROOT/isolation/sandbox/chakra-sandbox" "$bin_dir/chakra-sandbox"
+  chmod +x "$bin_dir/chakra-vault" "$bin_dir/chakra-file-inspector" "$bin_dir/chakra-sandbox"
+  ln -sf /usr/lib/chakra/bin/chakra-vault "$ROOTFS/usr/local/bin/chakra-vault"
+  ln -sf /usr/lib/chakra/bin/chakra-file-inspector "$ROOTFS/usr/local/bin/chakra-file-inspector"
+  ln -sf /usr/lib/chakra/bin/chakra-sandbox "$ROOTFS/usr/local/bin/chakra-sandbox"
+
+  # USB Guard: the real daemon, bootstrapped to allow what's connected
+  # at boot and block new insertions by default. See
+  # core/security/usbguard/README.md for the honest gap (no interactive
+  # "ask" prompt yet -- Daily mode's "ask" degrades to "block").
+  cp "$sec_cfg/usbguard/usbguard-daemon.conf" "$ROOTFS/etc/usbguard/usbguard-daemon.conf"
+  mkdir -p "$ROOTFS/lib/systemd/system"
+  cp "$sec_cfg/usbguard/chakra-usbguard-bootstrap.service" \
+    "$ROOTFS/lib/systemd/system/chakra-usbguard-bootstrap.service"
+  chroot "$ROOTFS" systemctl enable chakra-usbguard-bootstrap.service >/dev/null 2>&1 || true
+  chroot "$ROOTFS" systemctl enable usbguard >/dev/null 2>&1 || true
+
+  # Vault gets a menu entry (genuinely interactive: create/open/close/list);
+  # File Inspector and Sandbox both need a target argument, so they're
+  # CLI-first like the offensive tools in the Security Tools menu --
+  # available via /usr/local/bin, not force-fit into a launcher here.
+  cat > "$apps_dir/chakra-tool-dash-Chakra-Vault.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Chakra Vault
+Comment=Encrypted storage (LUKS2) -- create, open, close, list vaults
+Icon=utilities-system-monitor
+Exec=konsole -e bash -c "chakra-vault list; echo; echo 'Try: sudo chakra-vault create <name> <size_mb>'; exec bash"
+Terminal=false
+Categories=X-Chakra-Tools;
+EOF
+}
+
 build_squashfs() {
   log "Building squashfs from rootfs..."
   mkdir -p "$ISO_STAGE/live" "$ISO_STAGE/boot/grub"
@@ -790,6 +833,7 @@ main() {
   apply_security_menu
   apply_chakra_tools
   apply_chakra_sentinel
+  apply_permission_enforcement
   cleanup_mounts
   build_squashfs
   stage_kernel_and_grub

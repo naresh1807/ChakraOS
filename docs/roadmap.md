@@ -13,14 +13,17 @@ Phases are ordered by dependency, not just topic — each phase only depends on 
 
 - **Phase 6 — Read-only observability apps.** Five real, callable "Chakra system API" CLI tools (`chakra-health`, `chakra-processlens`, `chakra-loglens`, `chakra-devicewatch`, `chakra-netguard`, each supporting `--json`) plus a `dialog`-based TUI Command Center tying them together, reachable from a new "Chakra Tools" Start menu section. Deliberately CLI/TUI, not a real GUI (see `core/dashboard/README.md`) — that's a materially larger, separate undertaking. This *is* the API surface Sentinel (Phase 7) calls, not a placeholder for it. → `core/dashboard/`
 
+- **Phase 7 — Chakra Sentinel, read-only mode.** `chakra-sentinel`: a deterministic keyword-matching Intent Engine routing questions to the Phase 6 tools, every dispatch logged via `chakra-audit-log` (the first real Chakra Audit implementation — Phase 5 deferred this until something existed to log). NVIDIA NIM available as an *optional* explain-layer upgrade (off by default, never in the decision path — see `ai-agent/README.md`), not a replacement for the real local-first LLM the manual describes, which remains a separate future phase. Routing verified against every example query the master manual itself uses. → `ai-agent/`
+
+- **Phase 8 — Permission & privacy enforcement.** The real `usbguard` daemon (bootstrapped to allow boot-time devices, block later insertions — the first thing to enforce a `/etc/chakra/policy.d/` policy), Chakra Vault (file-backed LUKS2 via `cryptsetup`), File Inspector (SHA256/MIME/perms/setuid/EXIF, `--json` like the Phase 6 tools), and Sandbox (a `firejail` wrapper — private fs, no network). AppGuard and the rest of Privacy Center are **deferred** — they need a real permission-broker/portal layer between apps and hardware that this desktop doesn't have; a fake AppGuard that intercepts nothing would be worse than none (see `privacy/README.md`). Also fixed here: the Chakra Audit trail and `chakra-loglens --source security` silently no-op'd when run unprivileged (their normal path) — now bridged via the `adm` group (see `core/security/README.md`). → `privacy/`, `isolation/`, `core/security/`
+
 ## In progress
 
-- **Phase 7 — Chakra Sentinel, read-only mode.** `chakra-sentinel`: a deterministic keyword-matching Intent Engine routing questions to the Phase 6 tools, every dispatch logged via `chakra-audit-log` (the first real Chakra Audit implementation — Phase 5 deferred this until something existed to log). NVIDIA NIM available as an *optional* explain-layer upgrade (off by default, never in the decision path — see `ai-agent/README.md`), not a replacement for the real local-first LLM the manual describes, which remains a separate future phase. Routing verified against every example query the master manual itself uses. → `ai-agent/`
+*(nothing active — Phase 9 is next)*
 
 ## Planned
 
-- **Phase 8 — Permission & privacy enforcement.** AppGuard, USB Guard, Privacy Center, Vault, Sandbox, File Inspector. → `privacy/`, `isolation/`
-- **Phase 9 — Active defense: Chakra Shield.** Shield + Security Score, built on Phase 6's observability and Phase 8's enforcement. → `security-workspace/`
+- **Phase 9 — Active defense: Chakra Shield.** Shield + Security Score, built on Phase 6's observability and Phase 8's enforcement. Also the natural home for the USB "ask" prompt UI that Phase 8's USB Guard degrades to "block" without. → `security-workspace/`
 - **Phase 10 — Developer tooling suite.** DevHub, Env Manager, Port Watch, API Watch, Container Center. No AI/policy dependency — could run in parallel with 6–9. → `developer-tools/`
 - **Phase 11 — System maintenance & reliability.** Update, Snapshot, Recovery, Fixer, Clean, Store, Build Center. → `updater/`, `recovery/`, `app-center/`, `installer/`
 - **Phase 12 — Performance & daily-use polish.** Performance Engine, Battery AI, Search, Clipboard.

@@ -1,0 +1,116 @@
+#!/bin/bash
+# chakra-vault -- Chakra Vault: encrypted storage via LUKS2 (cryptsetup).
+# Real disk encryption, not a placeholder -- file-backed LUKS2
+# containers under /var/lib/chakra/vaults/ (the chakra-core-reserved
+# state path from Phase 4).
+#
+# Usage:
+#   chakra-vault create <name> <size_mb>
+#   chakra-vault open <name>
+#   chakra-vault close <name>
+#   chakra-vault list
+set -u
+
+VAULT_DIR=/var/lib/chakra/vaults
+MOUNT_BASE=/media/chakra-vault
+mkdir -p "$VAULT_DIR" 2>/dev/null
+chmod 0700 "$VAULT_DIR" 2>/dev/null
+
+usage() {
+  echo "Usage: chakra-vault create <name> <size_mb>"
+  echo "       chakra-vault open <name>"
+  echo "       chakra-vault close <name>"
+  echo "       chakra-vault list"
+}
+
+require_root() {
+  if [[ $EUID -ne 0 ]]; then
+    echo "chakra-vault needs root for cryptsetup/mount. Try: sudo chakra-vault $*" >&2
+    exit 1
+  fi
+}
+
+audit() {
+  # Don't swallow a real audit-write failure (chakra-vault runs as root,
+  # so this shouldn't be the adm-group permission case -- but if it fails,
+  # say so rather than losing the record silently).
+  command -v chakra-audit-log >/dev/null 2>&1 && \
+    chakra-audit-log --actor "chakra-vault" --action "$1" --target "$2" \
+      --risk-tier 2 --approved-by "user (direct invocation)" --result "$3" || true
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  create)
+    require_root "$@"
+    name="${2:?vault name required}"
+    size_mb="${3:?size in MB required}"
+    img="$VAULT_DIR/$name.img"
+    if [[ -f "$img" ]]; then echo "Vault '$name' already exists." >&2; exit 1; fi
+    echo "Creating ${size_mb}MB vault '$name'..."
+    truncate -s "${size_mb}M" "$img"
+    echo "Set an encryption passphrase for this vault (you will need it every time you open it -- there is no recovery without it):"
+    if cryptsetup luksFormat --type luks2 "$img"; then
+      audit "vault.create" "$name" "success"
+      echo "Vault '$name' created. Use 'chakra-vault open $name' to use it."
+    else
+      audit "vault.create" "$name" "failure"
+      rm -f "$img"
+      exit 1
+    fi
+    ;;
+  open)
+    require_root "$@"
+    name="${2:?vault name required}"
+    img="$VAULT_DIR/$name.img"
+    [[ -f "$img" ]] || { echo "No such vault: $name" >&2; exit 1; }
+    mapper="chakra-vault-$name"
+    mnt="$MOUNT_BASE-$name"
+    if [[ -e "/dev/mapper/$mapper" ]]; then
+      echo "Vault '$name' is already open at $mnt"
+      exit 0
+    fi
+    if ! cryptsetup open "$img" "$mapper"; then
+      audit "vault.open" "$name" "failure"
+      exit 1
+    fi
+    if ! blkid "/dev/mapper/$mapper" >/dev/null 2>&1; then
+      echo "First use: formatting vault filesystem (ext4)..."
+      mkfs.ext4 -q "/dev/mapper/$mapper"
+    fi
+    mkdir -p "$mnt"
+    mount "/dev/mapper/$mapper" "$mnt"
+    chown "${SUDO_USER:-chakra}:${SUDO_USER:-chakra}" "$mnt"
+    audit "vault.open" "$name" "success"
+    echo "Vault '$name' open at $mnt"
+    ;;
+  close)
+    require_root "$@"
+    name="${2:?vault name required}"
+    mapper="chakra-vault-$name"
+    mnt="$MOUNT_BASE-$name"
+    mountpoint -q "$mnt" 2>/dev/null && umount "$mnt"
+    if [[ -e "/dev/mapper/$mapper" ]]; then
+      cryptsetup close "$mapper"
+    fi
+    audit "vault.close" "$name" "success"
+    echo "Vault '$name' closed."
+    ;;
+  list)
+    echo "Chakra Vaults:"
+    shopt -s nullglob
+    found=0
+    for f in "$VAULT_DIR"/*.img; do
+      found=1
+      n="$(basename "$f" .img)"
+      state="closed"
+      [[ -e "/dev/mapper/chakra-vault-$n" ]] && state="open"
+      printf "  %-20s %-8s %s\n" "$n" "$(du -h "$f" 2>/dev/null | cut -f1)" "$state"
+    done
+    [[ $found -eq 0 ]] && echo "  (none yet -- create one with: sudo chakra-vault create <name> <size_mb>)"
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+esac

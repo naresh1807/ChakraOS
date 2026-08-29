@@ -1,0 +1,59 @@
+#!/bin/bash
+# chakra-file-inspector -- Chakra system API: file security inspection.
+# Risk tier 0 (read-only). Usage: chakra-file-inspector [--json] <file>
+set -u
+
+json_mode=0
+target=""
+for a in "$@"; do
+  if [[ "$a" == "--json" ]]; then json_mode=1; else target="$a"; fi
+done
+
+if [[ -z "$target" || ! -e "$target" ]]; then
+  echo "Usage: chakra-file-inspector [--json] <file>" >&2
+  exit 1
+fi
+
+sha256=$(sha256sum "$target" 2>/dev/null | cut -d' ' -f1)
+mime=$(file --mime-type -b "$target" 2>/dev/null)
+filetype=$(file -b "$target" 2>/dev/null)
+perms=$(stat -c '%A' "$target" 2>/dev/null)
+owner=$(stat -c '%U:%G' "$target" 2>/dev/null)
+size=$(stat -c '%s' "$target" 2>/dev/null)
+mtime=$(stat -c '%y' "$target" 2>/dev/null)
+is_exec="no"; [[ -x "$target" ]] && is_exec="yes"
+suid="no"; [[ -u "$target" ]] && suid="yes"
+sgid="no"; [[ -g "$target" ]] && sgid="yes"
+
+# Bonus metadata for media files -- exiftool is already installed (Phase 2).
+exif=""
+if command -v exiftool >/dev/null 2>&1 && [[ "$mime" =~ ^image/ ]]; then
+  exif=$(exiftool -s -Make -Model -DateTimeOriginal -GPSPosition "$target" 2>/dev/null)
+fi
+
+if [[ $json_mode -eq 1 ]]; then
+  jq -n \
+    --arg path "$target" --arg sha256 "$sha256" --arg mime "$mime" --arg filetype "$filetype" \
+    --arg perms "$perms" --arg owner "$owner" --arg size "$size" --arg mtime "$mtime" \
+    --arg exec "$is_exec" --arg suid "$suid" --arg sgid "$sgid" --arg exif "$exif" \
+    '{path:$path,sha256:$sha256,mime_type:$mime,file_type:$filetype,permissions:$perms,
+      owner:$owner,size_bytes:$size,modified:$mtime,executable:$exec,setuid:$suid,
+      setgid:$sgid,exif:$exif}'
+else
+  echo "Chakra File Inspector: $target"
+  echo "===================================================="
+  echo "SHA256:      $sha256"
+  echo "MIME type:   $mime"
+  echo "File type:   $filetype"
+  echo "Permissions: $perms  ($owner)"
+  echo "Size:        $size bytes"
+  echo "Modified:    $mtime"
+  echo "Executable:  $is_exec"
+  [[ "$suid" == "yes" ]] && echo "WARNING: setuid bit is set"
+  [[ "$sgid" == "yes" ]] && echo "WARNING: setgid bit is set"
+  if [[ -n "$exif" ]]; then
+    echo
+    echo "EXIF metadata:"
+    echo "$exif"
+  fi
+fi
