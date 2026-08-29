@@ -1,0 +1,40 @@
+#!/bin/bash
+# chakra-loglens -- Chakra system API: unified log viewer.
+# Risk tier 0 (read-only).
+# Usage: chakra-loglens [--json] [--source boot|kernel|security|app] [--since <time>]
+set -u
+
+json_mode=0
+source="all"
+since="-1h"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) json_mode=1; shift ;;
+    --source) source="${2:-all}"; shift 2 ;;
+    --since) since="${2:--1h}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+args=(--no-pager -q --since "$since")
+case "$source" in
+  boot)     args+=(-b) ;;
+  kernel)   args+=(-k) ;;
+  security) : ;;  # handled separately below (audit log, not journald)
+  app)      args+=(--user-unit=) ;;
+  all|*)    : ;;
+esac
+
+if [[ "$source" == "security" ]]; then
+  out=$(tail -n 50 /var/log/audit/audit.log 2>/dev/null)
+else
+  out=$(journalctl "${args[@]}" 2>/dev/null | tail -n 50)
+fi
+
+if [[ $json_mode -eq 1 ]]; then
+  jq -Rs --arg source "$source" --arg since "$since" '{source:$source,since:$since,lines:(split("\n")|map(select(length>0)))}' <<< "$out"
+else
+  echo "Chakra Log Lens -- source=$source since=$since (last 50 lines)"
+  echo "======================================================================"
+  echo "$out"
+fi

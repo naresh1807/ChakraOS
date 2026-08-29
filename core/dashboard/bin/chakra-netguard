@@ -1,0 +1,33 @@
+#!/bin/bash
+# chakra-netguard -- Chakra system API: network security posture (display only).
+# Risk tier 0 (read-only) -- this is the read-only NetGuard from Phase 6;
+# active blocking/alerting is Phase 9 (Chakra Shield).
+# Usage: chakra-netguard [--json]
+set -u
+
+json_mode=0
+[[ "${1:-}" == "--json" ]] && json_mode=1
+
+listening=$(ss -tulpn 2>/dev/null | tail -n +2)
+established=$(ss -tup state established 2>/dev/null | tail -n +2)
+fw_active="inactive"
+systemctl is-active --quiet nftables 2>/dev/null && fw_active="active"
+default_route=$(ip route show default 2>/dev/null)
+
+if [[ $json_mode -eq 1 ]]; then
+  jq -n \
+    --arg listening "$listening" --arg established "$established" \
+    --arg firewall "$fw_active" --arg route "$default_route" \
+    '{listening_ports:$listening,established_connections:$established,firewall_status:$firewall,default_route:$route}'
+else
+  echo "Chakra NetGuard (read-only)"
+  echo "============================"
+  echo "Firewall (nftables): $fw_active"
+  echo "Default route:       ${default_route:-none}"
+  echo
+  echo "Listening ports:"
+  echo "${listening:-  (none)}"
+  echo
+  echo "Established connections:"
+  echo "${established:-  (none)}"
+fi

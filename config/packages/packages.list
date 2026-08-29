@@ -42,6 +42,12 @@ plasma-nm
 nftables
 auditd
 
+# Phase 6: read-only observability tools (Chakra system APIs).
+dialog
+lm-sensors
+smartmontools
+jq
+
 # Audio foundation
 pipewire
 pipewire-pulse

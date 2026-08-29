@@ -1,0 +1,20 @@
+<!DOCTYPE Menu PUBLIC "-//freedesktop//DTD Menu 1.0//EN"
+ "http://www.freedesktop.org/standards/menu-spec/menu-1.0.dtd">
+<!--
+  Chakra OS "Chakra Tools" menu: the Phase 6 read-only observability
+  tools (Chakra system APIs), kept separate from the Security Tools
+  menu since these are Chakra's own dashboard tools, not the bundled
+  pentesting toolkit. Same DefaultMergeDirs mechanism as
+  config/security-menu/chakra-security-tools.menu; see that file's
+  comment for the full rationale.
+-->
+<Menu>
+  <Name>Applications</Name>
+  <Menu>
+    <Name>ChakraTools</Name>
+    <Directory>chakra-tools.directory</Directory>
+    <Include>
+      <Category>X-Chakra-Tools</Category>
+    </Include>
+  </Menu>
+</Menu>

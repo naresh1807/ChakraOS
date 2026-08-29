@@ -1,0 +1,36 @@
+#!/bin/bash
+# chakra-command-center -- umbrella TUI dashboard for the Phase 6
+# read-only observability tools. Not a GUI (see core/dashboard/README.md
+# for why) -- a dialog(1) menu over the same Chakra system API scripts,
+# so there's one obvious place to find them.
+set -u
+
+BIN=/usr/lib/chakra/bin
+
+show() {
+  local title="$1" cmd="$2"
+  "$cmd" 2>&1 | dialog --title "$title" --backtitle "Chakra Command Center" \
+    --programbox 20 100
+}
+
+while true; do
+  choice=$(dialog --clear --backtitle "Chakra Command Center" \
+    --title "Chakra Command Center" \
+    --menu "Read-only system observability (Risk tier 0)" 18 70 8 \
+    1 "Health -- CPU/RAM/disk/services/updates" \
+    2 "Process Lens -- top processes + process tree" \
+    3 "Log Lens -- recent boot/kernel/security logs" \
+    4 "Device Watch -- USB/storage/network/bluetooth" \
+    5 "NetGuard -- firewall status + connections" \
+    0 "Exit" \
+    3>&1 1>&2 2>&3)
+  status=$?
+  [[ $status -ne 0 || "$choice" == "0" ]] && clear && exit 0
+  case "$choice" in
+    1) show "Chakra Health" "$BIN/chakra-health" ;;
+    2) show "Chakra Process Lens" "$BIN/chakra-processlens" ;;
+    3) show "Chakra Log Lens" "$BIN/chakra-loglens" ;;
+    4) show "Chakra Device Watch" "$BIN/chakra-devicewatch" ;;
+    5) show "Chakra NetGuard" "$BIN/chakra-netguard" ;;
+  esac
+done

@@ -1,0 +1,9 @@
+# Chakra Tools menu -- Phase 6 read-only observability tools.
+# Same format as config/security-menu/tools.list:
+# Name|category_id|exec command|needs_root(0/1)
+Chakra Command Center|Tools|chakra-command-center|0
+Chakra Health|Tools|chakra-health|0
+Chakra Process Lens|Tools|chakra-processlens|0
+Chakra Log Lens|Tools|chakra-loglens|0
+Chakra Device Watch|Tools|chakra-devicewatch|0
+Chakra NetGuard|Tools|chakra-netguard|0

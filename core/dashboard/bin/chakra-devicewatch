@@ -1,0 +1,37 @@
+#!/bin/bash
+# chakra-devicewatch -- Chakra system API: connected hardware inventory.
+# Risk tier 0 (read-only). Usage: chakra-devicewatch [--json]
+set -u
+
+json_mode=0
+[[ "${1:-}" == "--json" ]] && json_mode=1
+
+usb_devices=$(lsusb 2>/dev/null)
+block_devices=$(lsblk -o NAME,SIZE,TYPE,MOUNTPOINT 2>/dev/null)
+net_interfaces=$(ip -brief link show 2>/dev/null)
+bt_devices=""
+command -v bluetoothctl >/dev/null 2>&1 && bt_devices=$(bluetoothctl devices 2>/dev/null)
+
+if [[ $json_mode -eq 1 ]]; then
+  jq -n \
+    --arg usb "$usb_devices" --arg block "$block_devices" \
+    --arg net "$net_interfaces" --arg bt "$bt_devices" \
+    '{usb:$usb,block_devices:$block,network_interfaces:$net,bluetooth:$bt}'
+else
+  echo "Chakra Device Watch"
+  echo "===================="
+  echo
+  echo "USB devices:"
+  echo "$usb_devices"
+  echo
+  echo "Block/storage devices:"
+  echo "$block_devices"
+  echo
+  echo "Network interfaces:"
+  echo "$net_interfaces"
+  if [[ -n "$bt_devices" ]]; then
+    echo
+    echo "Bluetooth devices (paired):"
+    echo "$bt_devices"
+  fi
+fi

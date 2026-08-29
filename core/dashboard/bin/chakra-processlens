@@ -1,0 +1,59 @@
+#!/bin/bash
+# chakra-processlens -- Chakra system API: process inspector.
+# Risk tier 0 (read-only).
+# Usage: chakra-processlens [--json] [--pid <pid>]
+#   no args      -- top processes by CPU/RAM + process tree
+#   --pid <pid>  -- detail on one process: cmdline, open files, network
+set -u
+
+json_mode=0
+target_pid=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) json_mode=1; shift ;;
+    --pid) target_pid="${2:-}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+if [[ -n "$target_pid" ]]; then
+  if [[ ! -d "/proc/$target_pid" ]]; then
+    echo "No such process: $target_pid" >&2
+    exit 1
+  fi
+  cmdline=$(tr '\0' ' ' < "/proc/$target_pid/cmdline" 2>/dev/null)
+  cwd=$(readlink "/proc/$target_pid/cwd" 2>/dev/null)
+  open_files=$(ls -1 "/proc/$target_pid/fd" 2>/dev/null | wc -l)
+  net_conns=$(ss -tup 2>/dev/null | grep -c "pid=$target_pid,")
+  if [[ $json_mode -eq 1 ]]; then
+    jq -n --arg pid "$target_pid" --arg cmdline "$cmdline" --arg cwd "$cwd" \
+      --arg open_files "$open_files" --arg net_conns "$net_conns" \
+      '{pid:$pid,cmdline:$cmdline,cwd:$cwd,open_file_count:$open_files,network_connection_count:$net_conns}'
+  else
+    echo "Process $target_pid"
+    echo "============="
+    echo "Command:    $cmdline"
+    echo "CWD:        $cwd"
+    echo "Open files: $open_files"
+    echo "Net conns:  $net_conns"
+  fi
+  exit 0
+fi
+
+if [[ $json_mode -eq 1 ]]; then
+  ps -eo pid,ppid,pcpu,pmem,comm --sort=-pcpu --no-headers 2>/dev/null | head -15 | \
+    awk '{printf "{\"pid\":\"%s\",\"ppid\":\"%s\",\"cpu_percent\":\"%s\",\"mem_percent\":\"%s\",\"command\":\"%s\"}\n",$1,$2,$3,$4,$5}' | \
+    jq -s '.'
+else
+  echo "Chakra Process Lens -- top 15 by CPU"
+  echo "===================================="
+  ps -eo pid,ppid,pcpu,pmem,comm --sort=-pcpu --no-headers 2>/dev/null | head -15
+  echo
+  echo "Process tree:"
+  echo "-------------"
+  if command -v pstree >/dev/null 2>&1; then
+    pstree -p | head -40
+  else
+    ps -ef --forest | head -40
+  fi
+fi

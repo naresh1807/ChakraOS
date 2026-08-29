@@ -1,0 +1,55 @@
+#!/bin/bash
+# chakra-health -- Chakra system API: system health summary.
+# Risk tier 0 (read-only). Usage: chakra-health [--json]
+#
+# This is exactly the kind of probe Chakra Sentinel (Phase 7) will call
+# with --json and parse -- writing it as a real, structured CLI tool now
+# instead of a placeholder is the point of Phase 6.
+set -u
+
+json_mode=0
+[[ "${1:-}" == "--json" ]] && json_mode=1
+
+mem_total=$(free -m | awk '/^Mem:/{print $2}')
+mem_used=$(free -m | awk '/^Mem:/{print $3}')
+mem_avail=$(free -m | awk '/^Mem:/{print $7}')
+swap_total=$(free -m | awk '/^Swap:/{print $2}')
+swap_used=$(free -m | awk '/^Swap:/{print $3}')
+disk_root_pct=$(df -h / 2>/dev/null | awk 'NR==2{print $5}' | tr -d '%')
+failed_units=$(systemctl --failed --no-legend 2>/dev/null | wc -l)
+boot_time=$(who -b 2>/dev/null | awk '{print $3, $4}')
+load_avg=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
+kernel_errors=$(journalctl -b -p err --no-pager -q 2>/dev/null | wc -l)
+pending_updates=$(apt list --upgradable 2>/dev/null | grep -vc "^Listing")
+
+cpu_temp="N/A"
+if command -v sensors >/dev/null 2>&1; then
+  t=$(sensors 2>/dev/null | grep -m1 -oE '\+[0-9]+\.[0-9]+°C')
+  [[ -n "$t" ]] && cpu_temp="$t"
+fi
+
+if [[ $json_mode -eq 1 ]]; then
+  jq -n \
+    --arg mem_total "$mem_total" --arg mem_used "$mem_used" --arg mem_avail "$mem_avail" \
+    --arg swap_total "$swap_total" --arg swap_used "$swap_used" \
+    --arg disk_root_pct "$disk_root_pct" --arg failed_units "$failed_units" \
+    --arg boot_time "$boot_time" --arg load_avg "$load_avg" \
+    --arg kernel_errors "$kernel_errors" --arg pending_updates "$pending_updates" \
+    --arg cpu_temp "$cpu_temp" \
+    '{mem_total_mb:$mem_total,mem_used_mb:$mem_used,mem_available_mb:$mem_avail,
+      swap_total_mb:$swap_total,swap_used_mb:$swap_used,disk_root_percent:$disk_root_pct,
+      failed_units:$failed_units,boot_time:$boot_time,load_avg:$load_avg,
+      kernel_errors_since_boot:$kernel_errors,pending_updates:$pending_updates,cpu_temp:$cpu_temp}'
+else
+  echo "Chakra Health"
+  echo "============="
+  echo "Boot time:                 ${boot_time:-unknown}"
+  echo "Load average:              ${load_avg:-unknown}"
+  echo "Memory:                    ${mem_used}MB used / ${mem_total}MB total (${mem_avail}MB available)"
+  echo "Swap:                      ${swap_used}MB used / ${swap_total}MB total"
+  echo "Root disk usage:           ${disk_root_pct}%"
+  echo "CPU temperature:           $cpu_temp"
+  echo "Failed services:           $failed_units"
+  echo "Kernel errors (this boot): $kernel_errors"
+  echo "Pending updates:           $pending_updates"
+fi

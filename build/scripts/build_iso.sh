@@ -655,6 +655,49 @@ EOF
   unset -f _chakra_add_category
 }
 
+apply_chakra_tools() {
+  log "Installing Chakra Tools (Phase 6 read-only observability scripts + menu)..."
+  local dash_cfg="$PROJECT_ROOT/core/dashboard"
+  local menu_cfg="$PROJECT_ROOT/config/chakra-tools-menu"
+  local apps_dir="$ROOTFS/usr/share/applications"
+  local dirs_dir="$ROOTFS/usr/share/desktop-directories"
+  local merged_dir="$ROOTFS/etc/xdg/menus/applications-merged"
+  local bin_dir="$ROOTFS/usr/lib/chakra/bin"
+  mkdir -p "$apps_dir" "$dirs_dir" "$merged_dir" "$bin_dir"
+
+  # The actual Chakra system API scripts, in the chakra-core-reserved
+  # /usr/lib/chakra/ path, symlinked into /usr/local/bin for direct use.
+  local f name
+  for f in "$dash_cfg/bin/"*; do
+    name="$(basename "$f")"
+    cp "$f" "$bin_dir/$name"
+    chmod +x "$bin_dir/$name"
+    ln -sf "/usr/lib/chakra/bin/$name" "$ROOTFS/usr/local/bin/$name"
+  done
+
+  # Menu: same DefaultMergeDirs mechanism as apply_security_menu(), a
+  # separate top-level "Chakra Tools" section.
+  cp "$menu_cfg/chakra-tools.directory" "$dirs_dir/"
+  cp "$menu_cfg/chakra-tools.menu" "$merged_dir/"
+
+  local tname cat exec_cmd needs_root safe_id run_cmd
+  while IFS='|' read -r tname cat exec_cmd needs_root; do
+    [[ -z "$tname" || "$tname" == \#* ]] && continue
+    safe_id="$(echo "$tname" | tr -c 'a-zA-Z0-9' '-' | tr -s '-')"
+    run_cmd="$exec_cmd"
+    [[ "$needs_root" == "1" ]] && run_cmd="sudo $exec_cmd"
+    cat > "$apps_dir/chakra-tool-dash-$safe_id.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=$tname
+Icon=utilities-system-monitor
+Exec=konsole -e bash -c "$run_cmd; echo; echo '--- press Enter to close ---'; read"
+Terminal=false
+Categories=X-Chakra-$cat;
+EOF
+  done < "$menu_cfg/tools.list"
+}
+
 build_squashfs() {
   log "Building squashfs from rootfs..."
   mkdir -p "$ISO_STAGE/live" "$ISO_STAGE/boot/grub"
@@ -714,6 +757,7 @@ main() {
   apply_desktop_icons
   apply_friendly_app_names
   apply_security_menu
+  apply_chakra_tools
   cleanup_mounts
   build_squashfs
   stage_kernel_and_grub
