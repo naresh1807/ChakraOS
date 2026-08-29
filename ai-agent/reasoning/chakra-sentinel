@@ -30,9 +30,12 @@ NIM_BASE_URL="https://integrate.api.nvidia.com/v1"
 [[ -f "$CONF" ]] && source "$CONF" 2>/dev/null
 
 audit() {
+  # No 2>/dev/null here on purpose: if the audit record can't be written
+  # (e.g. this user isn't in the adm group) chakra-audit-log says so on
+  # stderr. A dispatch that isn't audited should be visible, not silent.
   "$BIN/chakra-audit-log" --actor "chakra-sentinel" --action "$1" \
     --target "localhost" --risk-tier 0 --approved-by "auto (risk-0, mode=$MODE)" \
-    --result "$2" 2>/dev/null
+    --result "$2" || true
 }
 
 # NIM explain layer -- only called if NIM_API_KEY is set. Takes the

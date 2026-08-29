@@ -6,15 +6,29 @@
 # (JSON-Lines) so it can be tailed/grepped/parsed without a full-file
 # reparse on every write.
 #
+# The trail lives at /var/log/chakra/audit/sentinel.jsonl. chakra-core
+# creates that directory as root:adm mode 2770 and pre-creates the file
+# 0664 root:adm (see core/systemd/chakra-core.conf and apply_chakra_core
+# in build/scripts/build_iso.sh) so the unprivileged desktop user -- a
+# member of adm -- can append records when Sentinel / Vault / Sandbox are
+# run without sudo, which is their normal invocation path. If the append
+# fails this script says so on stderr and exits non-zero rather than
+# silently dropping the record.
+#
 # Usage:
 #   chakra-audit-log --actor A --action B --target C --risk-tier N \
 #                     --approved-by D --result E
 set -u
+umask 0002   # any file we do end up creating stays group-writable (adm)
 
 LOG_DIR="/var/log/chakra/audit"
 LOG_FILE="$LOG_DIR/sentinel.jsonl"
-mkdir -p "$LOG_DIR" 2>/dev/null
-chmod 0750 "$LOG_DIR" 2>/dev/null
+
+# The directory is normally pre-created with the right ownership/mode.
+# Only create it if it's genuinely missing, and never touch the mode of
+# an existing one -- clobbering its group-write bit is exactly what used
+# to make this silently stop working for the non-root user.
+[[ -d "$LOG_DIR" ]] || mkdir -p "$LOG_DIR" 2>/dev/null || true
 
 actor="" action="" target="" risk_tier="" approved_by="" result=""
 while [[ $# -gt 0 ]]; do
@@ -32,14 +46,19 @@ done
 ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 if command -v jq >/dev/null 2>&1; then
-  jq -nc \
+  record="$(jq -nc \
     --arg ts "$ts" --arg actor "$actor" --arg action "$action" \
     --arg target "$target" --arg risk_tier "$risk_tier" \
     --arg approved_by "$approved_by" --arg result "$result" \
-    '{timestamp:$ts,actor:$actor,action:$action,target:$target,risk_tier:($risk_tier|tonumber? // $risk_tier),approved_by:$approved_by,result:$result}' \
-    >> "$LOG_FILE" 2>/dev/null
+    '{timestamp:$ts,actor:$actor,action:$action,target:$target,risk_tier:($risk_tier|tonumber? // $risk_tier),approved_by:$approved_by,result:$result}')"
 else
   # jq should always be present (Phase 6 dependency) but degrade gracefully.
-  printf '{"timestamp":"%s","actor":"%s","action":"%s","target":"%s","risk_tier":"%s","approved_by":"%s","result":"%s"}\n' \
-    "$ts" "$actor" "$action" "$target" "$risk_tier" "$approved_by" "$result" >> "$LOG_FILE" 2>/dev/null
+  record="$(printf '{"timestamp":"%s","actor":"%s","action":"%s","target":"%s","risk_tier":"%s","approved_by":"%s","result":"%s"}' \
+    "$ts" "$actor" "$action" "$target" "$risk_tier" "$approved_by" "$result")"
+fi
+
+if ! printf '%s\n' "$record" >> "$LOG_FILE" 2>/dev/null; then
+  echo "chakra-audit-log: could not append the audit record to $LOG_FILE" >&2
+  echo "chakra-audit-log: '$(id -un)' needs to be in the 'adm' group and $LOG_DIR must be group-writable (2770 root:adm)." >&2
+  exit 1
 fi

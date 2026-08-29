@@ -192,15 +192,20 @@ create_default_user() {
   # shellcheck disable=SC1090
   source "$CONFIG_DIR/defaults/user.conf"
   if chroot "$ROOTFS" id "$CHAKRA_USERNAME" >/dev/null 2>&1; then
-    log "User $CHAKRA_USERNAME already exists, skipping creation."
-    return 0
+    log "User $CHAKRA_USERNAME already exists — ensuring group membership only."
+  else
+    log "Creating default user '$CHAKRA_USERNAME'..."
+    chroot "$ROOTFS" adduser --disabled-password --gecos "" "$CHAKRA_USERNAME"
+    echo "Set a password for the '$CHAKRA_USERNAME' account in the built image:"
+    chroot "$ROOTFS" passwd "$CHAKRA_USERNAME"
   fi
-  log "Creating default user '$CHAKRA_USERNAME'..."
-  chroot "$ROOTFS" adduser --disabled-password --gecos "" "$CHAKRA_USERNAME"
-  chroot "$ROOTFS" usermod -aG "$CHAKRA_USER_GROUPS" "$CHAKRA_USERNAME"
 
-  echo "Set a password for the '$CHAKRA_USERNAME' account in the built image:"
-  chroot "$ROOTFS" passwd "$CHAKRA_USERNAME"
+  # Always (re)apply group membership, even on a rootfs that persists
+  # across rebuilds — this is how an existing image picks up a change to
+  # CHAKRA_USER_GROUPS (e.g. adding 'adm', which the Chakra audit trail
+  # and the read-only log tools depend on).
+  chroot "$ROOTFS" usermod -aG "$CHAKRA_USER_GROUPS" "$CHAKRA_USERNAME"
+  log "User $CHAKRA_USERNAME is in groups: $(chroot "$ROOTFS" id -nG "$CHAKRA_USERNAME")"
 }
 
 apply_chakra_core() {
@@ -219,9 +224,21 @@ apply_chakra_core() {
            "$ROOTFS/usr/lib/chakra" \
            "$ROOTFS/usr/share/chakra" \
            "$ROOTFS/var/lib/chakra" \
-           "$ROOTFS/var/log/chakra"
-  chmod 0750 "$ROOTFS/var/lib/chakra" "$ROOTFS/var/log/chakra"
-  chroot "$ROOTFS" chown root:adm /var/log/chakra || true
+           "$ROOTFS/var/log/chakra/audit"
+  chmod 0750 "$ROOTFS/var/lib/chakra"
+
+  # The Chakra Audit trail. /var/log/chakra is adm-readable; the audit/
+  # subdir is adm-WRITABLE (setgid) so the unprivileged desktop user (in
+  # adm) can append records when Sentinel/Vault/Sandbox run without sudo.
+  # sentinel.jsonl is pre-created 0664 root:adm so the first append from
+  # either root or the adm user doesn't lock the other one out. This
+  # mirrors core/systemd/chakra-core.conf exactly (which re-asserts it on
+  # every boot). See core/security/README.md for the tamper-evidence gap.
+  chmod 2750 "$ROOTFS/var/log/chakra"
+  chmod 2770 "$ROOTFS/var/log/chakra/audit"
+  [[ -f "$ROOTFS/var/log/chakra/audit/sentinel.jsonl" ]] || : > "$ROOTFS/var/log/chakra/audit/sentinel.jsonl"
+  chmod 0664 "$ROOTFS/var/log/chakra/audit/sentinel.jsonl"
+  chroot "$ROOTFS" chown -R root:adm /var/log/chakra || true
 
   # This rootfs persists across rebuilds (build/rootfs is only wiped with
   # --clean). An earlier build wrote the neofetch ascii art to an ad hoc
@@ -266,10 +283,18 @@ apply_security_substrate() {
   cp "$sec_cfg/sysctl-hardening.conf" "$ROOTFS/etc/sysctl.d/60-chakra-hardening.conf"
 
   # OS-level audit trail (auditd). The higher-level "Chakra Audit"
-  # JSON-schema trail from the master manual is future work once
-  # Sentinel/the Policy Engine actually produce decisions worth logging
-  # -- this is the underlying log those would sit alongside.
+  # JSON-schema trail (chakra-audit-log, Phase 7) sits alongside this.
   chroot "$ROOTFS" systemctl enable auditd >/dev/null 2>&1 || true
+
+  # Let the adm group read /var/log/audit/audit.log. auditd keeps it
+  # root-only (0600) by default, which means `chakra-loglens --source
+  # security` -- called by Sentinel as the unprivileged user -- silently
+  # returns nothing. With log_group=adm, auditd writes it 0640 root:adm
+  # and the desktop user (in adm) can read it.
+  if [[ -f "$ROOTFS/etc/audit/auditd.conf" ]]; then
+    sed -i 's/^\s*log_group\s*=.*/log_group = adm/' "$ROOTFS/etc/audit/auditd.conf"
+    grep -q '^log_group' "$ROOTFS/etc/audit/auditd.conf" || echo 'log_group = adm' >> "$ROOTFS/etc/audit/auditd.conf"
+  fi
 
   # Policy schema foundation -- not yet enforced by anything; see
   # core/policies/README.md for why this is schema-only for now.

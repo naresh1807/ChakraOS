@@ -21,14 +21,30 @@ case "$source" in
   boot)     args+=(-b) ;;
   kernel)   args+=(-k) ;;
   security) : ;;  # handled separately below (audit log, not journald)
-  app)      args+=(--user-unit=) ;;
+  app)      args+=(--facility=user,daemon) ;;  # syslog "user"+"daemon" = application/service messages
   all|*)    : ;;
 esac
 
+# Full-system log reads need privilege: audit.log is root/adm-only, and
+# the journal only shows a plain user their own session unless they're in
+# adm or systemd-journal. Say so plainly instead of returning a silent
+# empty result (which is what this tool used to do, run unprivileged).
+privileged=0
+{ [[ $EUID -eq 0 ]] || id -nG 2>/dev/null | grep -qwE 'adm|systemd-journal'; } && privileged=1
+
 if [[ "$source" == "security" ]]; then
-  out=$(tail -n 50 /var/log/audit/audit.log 2>/dev/null)
+  if [[ -r /var/log/audit/audit.log ]]; then
+    out=$(tail -n 50 /var/log/audit/audit.log 2>/dev/null)
+  elif [[ -e /var/log/audit/audit.log ]]; then
+    out="(cannot read /var/log/audit/audit.log -- run as root, or add this user to the 'adm' group)"
+  else
+    out="(no OS audit log at /var/log/audit/audit.log -- is auditd running?)"
+  fi
 else
   out=$(journalctl "${args[@]}" 2>/dev/null | tail -n 50)
+  if [[ -z "$out" && $privileged -eq 0 ]]; then
+    out="(cannot read the system journal -- run as root, or add this user to the 'adm' group)"
+  fi
 fi
 
 if [[ $json_mode -eq 1 ]]; then
