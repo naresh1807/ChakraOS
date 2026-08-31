@@ -83,6 +83,14 @@ wl-clipboard
 # renders Markdown natively; HTML needs it) and deliberately not bundled.
 xxd
 
+# Phase 14: identity. FIDO2/U2F security-key login (libpam-u2f brings
+# pamu2fcfg + pam_u2f.so), fingerprint login (fprintd), and fido2-tools
+# for enumerating keys. libfido2 was already pulled in.
+libpam-u2f
+fprintd
+libpam-fprintd
+fido2-tools
+
 # Audio foundation
 pipewire
 pipewire-pulse

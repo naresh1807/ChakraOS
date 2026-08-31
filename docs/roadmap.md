@@ -27,13 +27,14 @@ Phases are ordered by dependency, not just topic — each phase only depends on 
 
 - **Phase 13 — Security research environment.** `chakra-lab` — an isolated place to look at things you don't trust: firejail (`--net=none --private=<labdir> --caps.drop=all`) by default, podman `--container` for harder isolation; `new` / `drop` (samples hashed + `0400` into a MANIFEST) / `scan` (file/sha/clamav/yara/ssdeep/exif/strings triage) / `enter` (offline; `--online` asks first, loudly) / `reset` / `destroy`, all audit-logged. `chakra-reporter` — a structured findings-report builder (Summary/Scope/Findings-by-severity/IOCs/Timeline/Appendix) with `finding` / `ioc` / `evidence` (hashed) / `from-lab` (imports sample hashes) / `system` (Phase 6 `--json` snapshot) → Markdown, +HTML with pandoc. New **Security Research** menu. Deferred: a fake-internet sinkhole (inetsim) for dynamic analysis, an automated detonation sandbox (Cuckoo/CAPE-style), VM/microVM isolation, bundled pandoc. → `security-workspace/`
 
+- **Phase 14 — Identity & advanced boot hardening.** `chakra-identity` — an auth-posture report (password / autologin, FIDO2-U2F key registration + whether sudo requires it, fingerprint reader + enrolments, SSH password-auth, sudo `NOPASSWD`, Secure Boot / TPM / firmware) plus the enrolment front-end: `add-key` (`pamu2fcfg`), `require-key` / `require-password` (toggles `pam_u2f.so` in `/etc/pam.d/sudo`), `add-fingerprint` (`fprintd-enroll`). `--json`. Packages: `libpam-u2f`, `fprintd`, `libpam-fprintd`, `fido2-tools`. **Deferred to an installer** (the same missing prerequisite as Phase 5's Secure Boot note and Phase 11's persistence): Secure Boot / MOK enrolment, TPM measured boot, a signed+locked bootloader — a self-built hybrid ISO with a per-build GRUB can't meaningfully do these. Passkeys are WebAuthn / browser-side (Firefox already does them) — nothing OS-level to build. → `identity/`
+
 ## In progress
 
-*(nothing active — Phase 14 is next)*
+*(nothing active — Phase 15 is next)*
 
 ## Planned
 
-- **Phase 14 — Identity & advanced boot hardening.** Passkeys, FIDO2, biometrics; matured boot chain.
 - **Phase 15 — Mobile ecosystem.** Link (pairing) → Sync → Share → Find, in that order. → `mobile/`
 - **Phase 16 — Custom Chakra Shell.** Replacing stock KDE's launcher/dock/panel/notification center with fully custom Chakra components, plus light/auto/high-contrast theme modes — the most disruptive UI rewrite, deliberately last. → `desktop/launcher/`, `desktop/workspace-manager/`
 

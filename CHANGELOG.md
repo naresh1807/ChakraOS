@@ -4,6 +4,17 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Dates ar
 
 ## [Unreleased]
 
+## 2026-08-31 — Phase 14: identity & advanced boot hardening
+
+### Added
+- `chakra-identity` — the account's authentication posture in one place: password / autologin, FIDO2-U2F key registration + whether sudo requires one, fingerprint reader + enrolments, SSH password-auth, sudo `NOPASSWD` rules, Secure Boot / TPM / firmware. `--json`.
+- Enrolment front-end: `sudo chakra-identity add-key` (`pamu2fcfg`), `require-key` / `require-password` (toggles a backed-up `pam_u2f.so` line in `/etc/pam.d/sudo`), `add-fingerprint` (`fprintd-enroll` when a reader is claimed).
+- System Maintenance menu gains an *Identity* entry. Packages: `libpam-u2f`, `fprintd`, `libpam-fprintd`, `fido2-tools`.
+
+### Deferred (needs an installer)
+- Secure Boot / MOK enrolment, TPM measured boot, a signed+locked bootloader — a per-build hybrid ISO can't meaningfully do these. Same missing prerequisite as Phase 5's Secure Boot note and Phase 11's persistence.
+- Passkeys are WebAuthn (browser-side; Firefox already supports them) — nothing OS-level to build.
+
 ## 2026-08-31 — Phase 13: security research environment
 
 ### Added

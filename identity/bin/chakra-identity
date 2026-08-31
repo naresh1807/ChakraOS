@@ -1,0 +1,177 @@
+#!/bin/bash
+# chakra-identity -- how you log in, and how hard it is to become you.
+#
+# Shows the account's authentication posture -- password, hardware
+# security key (FIDO2/U2F), fingerprint, SSH, sudo, and the boot chain --
+# and is the front-end for enrolling a key or a fingerprint and for
+# making sudo require one.
+#
+# HONESTLY: on a live ISO none of this persists across a reboot unless
+# you `chakra-snapshot save` it (Phase 11) or install to a disk. And the
+# boot-chain half -- Secure Boot key enrolment, TPM measured boot, a
+# signed/locked bootloader -- genuinely needs an installed system with a
+# persistent EFI partition; there is no installer phase yet, so that part
+# is reported, not configured. See identity/README.md.
+#
+# Usage:
+#   chakra-identity                 posture report
+#   chakra-identity --json
+#   sudo chakra-identity add-key            register a FIDO2/U2F key
+#   sudo chakra-identity add-fingerprint    enrol a fingerprint (needs a reader)
+#   sudo chakra-identity require-key         sudo now needs the key too
+#   sudo chakra-identity require-password    revert: sudo = password only
+set -u
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+USER_NAME="${SUDO_USER:-$(id -un)}"
+USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6)"
+U2F_KEYS="$USER_HOME/.config/Yubico/u2f_keys"
+PAM_SUDO=/etc/pam.d/sudo
+PAM_MARK="# chakra-identity: hardware key for sudo"
+
+json=0; [[ "${1:-}" == "--json" ]] && { json=1; shift; }
+action="${1:-status}"
+
+_pw_state()  { passwd -S "$USER_NAME" 2>/dev/null | awk '{print $2}'; }   # P / L / NP
+_autologin() { grep -rqsi '^\s*Autologin' /etc/sddm.conf /etc/sddm.conf.d/ 2>/dev/null && echo yes || echo no; }
+_u2f_count() { [[ -s "$U2F_KEYS" ]] || { echo 0; return; }; awk -F: 'NR==1{print NF-1}' "$U2F_KEYS"; }
+_pam_u2f()   { grep -qs 'pam_u2f.so' "$PAM_SUDO" && echo yes || echo no; }
+_fp_reader() {
+  if command -v fprintd-list >/dev/null 2>&1; then
+    local out; out="$(fprintd-list "$USER_NAME" 2>&1)"
+    if printf '%s\n' "$out" | grep -qE '/net/reactivated/Fprint/Device/[0-9]|found [1-9][0-9]* device'; then
+      echo yes; return
+    fi
+  fi
+  lsusb 2>/dev/null | grep -qiE 'fingerprint|synaptics.*prometheus|goodix' && echo maybe || echo no
+}
+_fp_enrolled(){
+  command -v fprintd-list >/dev/null 2>&1 || { echo ""; return; }
+  fprintd-list "$USER_NAME" 2>/dev/null | grep -oE '(left|right)-(thumb|index|middle|ring|little)-finger' | paste -sd, -
+}
+_ssh_pw()    { grep -qsiE '^\s*PasswordAuthentication\s+no' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/* 2>/dev/null && echo disabled || echo "enabled (default)"; }
+_ssh_run()   {
+  command -v sshd >/dev/null 2>&1 || [[ -e /etc/ssh/sshd_config || -e /lib/systemd/system/ssh.service ]] || { echo "not installed"; return; }
+  systemctl is-active --quiet ssh 2>/dev/null && echo running || echo stopped
+}
+_sudo_nopw() { grep -rqsE '^[^#]*NOPASSWD' /etc/sudoers /etc/sudoers.d/ 2>/dev/null && echo yes || echo no; }
+_sb_state()  {
+  [[ -d /sys/firmware/efi ]] || { echo "n/a (legacy BIOS)"; return; }
+  local s; s="$(command -v mokutil >/dev/null 2>&1 && mokutil --sb-state 2>/dev/null | grep -oiE 'enabled|disabled' | head -1)"
+  echo "${s:-unknown}"
+}
+_tpm()       { ls /dev/tpm* >/dev/null 2>&1 && echo present || echo absent; }
+_efi()       { [[ -d /sys/firmware/efi ]] && echo "UEFI" || echo "legacy BIOS"; }
+
+case "$action" in
+  add-key)
+    [[ $EUID -eq 0 ]] || { echo "sudo chakra-identity add-key" >&2; exit 1; }
+    command -v pamu2fcfg >/dev/null 2>&1 || { echo "pamu2fcfg missing (apt install libpam-u2f)" >&2; exit 1; }
+    mkdir -p "$(dirname "$U2F_KEYS")"; chown "$USER_NAME" "$(dirname "$U2F_KEYS")"
+    echo "Touch your security key when it blinks..."
+    line="$(sudo -u "$USER_NAME" pamu2fcfg -n 2>/dev/null)" || { echo "enrolment failed / cancelled." >&2; exit 1; }
+    if [[ -s "$U2F_KEYS" ]]; then
+      # append this credential to the existing user line
+      sed -i "1s|\$|:$line|" "$U2F_KEYS"
+    else
+      printf '%s:%s\n' "$USER_NAME" "$line" > "$U2F_KEYS"
+    fi
+    chown "$USER_NAME" "$U2F_KEYS"; chmod 600 "$U2F_KEYS"
+    echo "Key registered for '$USER_NAME' ($(_u2f_count) total)."
+    echo "Make sudo require it:  sudo chakra-identity require-key"
+    echo "Persist it past reboot: chakra-snapshot save identity"
+    ;;
+
+  require-key)
+    [[ $EUID -eq 0 ]] || { echo "sudo chakra-identity require-key" >&2; exit 1; }
+    [[ -s "$U2F_KEYS" ]] || { echo "no key registered yet -- sudo chakra-identity add-key" >&2; exit 1; }
+    if grep -q "$PAM_MARK" "$PAM_SUDO"; then echo "sudo already requires the key."; exit 0; fi
+    cp "$PAM_SUDO" "$PAM_SUDO.chakra-bak"
+    sed -i "1i $PAM_MARK\nauth       required   pam_u2f.so authfile=$U2F_KEYS cue" "$PAM_SUDO"
+    echo "sudo now needs your password AND a key touch."
+    echo "Open a NEW terminal and test 'sudo true' before closing this one."
+    echo "Revert: sudo chakra-identity require-password"
+    ;;
+
+  require-password)
+    [[ $EUID -eq 0 ]] || { echo "sudo chakra-identity require-password" >&2; exit 1; }
+    if [[ -f "$PAM_SUDO.chakra-bak" ]]; then
+      mv "$PAM_SUDO.chakra-bak" "$PAM_SUDO"
+    else
+      sed -i "/$PAM_MARK/d; /pam_u2f.so authfile=/d" "$PAM_SUDO"
+    fi
+    echo "sudo is back to password-only."
+    ;;
+
+  add-fingerprint)
+    [[ $EUID -eq 0 ]] || { echo "sudo chakra-identity add-fingerprint" >&2; exit 1; }
+    command -v fprintd-enroll >/dev/null 2>&1 || { echo "fprintd missing (apt install fprintd libpam-fprintd)" >&2; exit 1; }
+    if [[ "$(_fp_reader)" == "no" ]]; then echo "No fingerprint reader detected."; exit 1; fi
+    sudo -u "$USER_NAME" fprintd-enroll
+    echo "Enrolled. To use it: sudo pam-auth-update  (enable 'Fingerprint authentication')"
+    ;;
+
+  status|"") : ;;
+  *) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac
+[[ "$action" != "status" && "$action" != "" ]] && exit 0
+
+pw="$(_pw_state)"; keys="$(_u2f_count)"; fp_r="$(_fp_reader)"; fp_e="$(_fp_enrolled)"
+
+if [[ $json -eq 1 ]]; then
+  jq -n --arg user "$USER_NAME" \
+    --arg password "$([[ "$pw" == P ]] && echo set || ([[ "$pw" == L ]] && echo locked || echo none))" \
+    --arg autologin "$(_autologin)" --argjson u2f_keys "$keys" --arg u2f_sudo "$(_pam_u2f)" \
+    --arg fp_reader "$fp_r" --arg fp_enrolled "$fp_e" \
+    --arg ssh "$(_ssh_run)" --arg ssh_pw "$(_ssh_pw)" --arg sudo_nopasswd "$(_sudo_nopw)" \
+    --arg firmware "$(_efi)" --arg secure_boot "$(_sb_state)" --arg tpm "$(_tpm)" \
+    '{user:$user,password:$password,autologin:($autologin=="yes"),
+      hardware_key:{registered:$u2f_keys,required_for_sudo:($u2f_sudo=="yes")},
+      fingerprint:{reader:$fp_reader,enrolled:$fp_enrolled},
+      ssh:{service:$ssh,password_auth:$ssh_pw},sudo_nopasswd:($sudo_nopasswd=="yes"),
+      boot:{firmware:$firmware,secure_boot:$secure_boot,tpm:$tpm}}'
+  exit 0
+fi
+
+echo "Chakra Identity  --  $USER_NAME"
+echo "=============================="
+echo
+echo "Login"
+echo "  Password:         $([[ "$pw" == P ]] && echo "set" || ([[ "$pw" == L ]] && echo "LOCKED" || echo "NONE -- set one: passwd"))"
+echo "  Autologin:        $(_autologin)$([[ "$(_autologin)" == yes ]] && echo "   (convenient for a live demo; a real deployment should turn this off)")"
+echo
+echo "Hardware security key (FIDO2 / U2F)"
+if [[ "$keys" -gt 0 ]]; then
+  echo "  Registered:       $keys key credential(s)"
+  echo "  Required for sudo: $(_pam_u2f)$([[ "$(_pam_u2f)" == no ]] && echo "   (enable: sudo chakra-identity require-key)")"
+else
+  echo "  Registered:       none        (sudo chakra-identity add-key)"
+fi
+echo
+echo "Fingerprint"
+case "$fp_r" in
+  yes)   echo "  Reader:           present"; echo "  Enrolled:         ${fp_e:-none    (sudo chakra-identity add-fingerprint)}" ;;
+  maybe) echo "  Reader:           a fingerprint device is on the USB bus but fprintd doesn't claim it" ;;
+  *)     echo "  Reader:           none detected" ;;
+esac
+echo
+echo "SSH"
+ssh_run="$(_ssh_run)"
+echo "  Service:          $ssh_run"
+if [[ "$ssh_run" != "not installed" ]]; then
+  echo "  Password auth:    $(_ssh_pw)$([[ "$(_ssh_pw)" != disabled ]] && echo "   (key-only is stronger: PasswordAuthentication no)")"
+fi
+echo
+echo "sudo"
+echo "  NOPASSWD rules:   $(_sudo_nopw)$([[ "$(_sudo_nopw)" == yes ]] && echo "   <- something can sudo without any prompt; review /etc/sudoers.d/")"
+echo
+echo "Boot chain"
+echo "  Firmware:         $(_efi)"
+echo "  Secure Boot:      $(_sb_state)"
+echo "  TPM:              $(_tpm)"
+echo "  Measured boot / signed+locked bootloader: not configured -- this"
+echo "  needs an installed system with a persistent EFI partition. There"
+echo "  is no installer phase yet; see identity/README.md."
+echo
+[[ "$keys" -gt 0 || -n "$fp_e" ]] && echo "Live session -- persist enrolments with:  chakra-snapshot save identity"
+exit 0

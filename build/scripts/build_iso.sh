@@ -1039,8 +1039,18 @@ apply_performance() {
   # config/maintenance-menu/tools.list, built by apply_maintenance below.
 }
 
+apply_identity() {
+  log "Installing Chakra Identity (Phase 14: auth-posture tool + FIDO2/fingerprint enrolment)..."
+  local bin_dir="$ROOTFS/usr/lib/chakra/bin"
+  mkdir -p "$bin_dir"
+  cp "$PROJECT_ROOT/identity/bin/chakra-identity" "$bin_dir/chakra-identity"
+  chmod +x "$bin_dir/chakra-identity"
+  ln -sf /usr/lib/chakra/bin/chakra-identity "$ROOTFS/usr/local/bin/chakra-identity"
+  # its menu entry comes from config/maintenance-menu/tools.list (apply_maintenance).
+}
+
 apply_maintenance() {
-  log "Installing Chakra System Maintenance (Phase 11: Fixer, Update, Clean, Snapshot + recovery; + Phase 12 Perf/Battery menu)..."
+  log "Installing Chakra System Maintenance (Phase 11: Fixer, Update, Clean, Snapshot + recovery; + Phase 12 Perf/Battery + Phase 14 Identity menu)..."
   local menu_cfg="$PROJECT_ROOT/config/maintenance-menu"
   local apps_dir="$ROOTFS/usr/share/applications"
   local dirs_dir="$ROOTFS/usr/share/desktop-directories"
@@ -1193,6 +1203,7 @@ main() {
   apply_chakra_shield
   apply_dev_tools
   apply_performance
+  apply_identity
   apply_maintenance
   apply_research
   cleanup_mounts
