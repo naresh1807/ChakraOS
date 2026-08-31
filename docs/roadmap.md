@@ -23,13 +23,14 @@ Phases are ordered by dependency, not just topic — each phase only depends on 
 
 - **Phase 11 — System maintenance & reliability.** `chakra-fixer` (diagnose + `--fix` common breakage: failed units, broken dpkg/apt, DNS, clock, nftables not loaded, Chakra services down, overlay space), `chakra-update` (apt front-end + `needrestart` + Chakra-version context; warns loudly that a live session's upgrades don't persist), `chakra-clean` (reclaim overlay/RAM space — apt cache, journal, `~/.cache`, `/tmp`, podman), `chakra-snapshot` (config+home `.tar.zst` save/list/restore — *honestly a config archive*, not btrfs snapshots), a GRUB **recovery mode** entry (`rescue.target`, points at `chakra-fixer`), and a **System Maintenance** menu section. Deferred, all pending an installer (flagged since Phase 5): persistence, block-level snapshots/rollback, a Store beyond Discover, a Build Center, unattended upgrades. → `updater/`, `recovery/`
 
+- **Phase 12 — Performance & daily-use polish.** `chakra-perf` (Performance Engine — power profile / CPU governor / swappiness state + one-call `performance`/`balanced`/`powersave` via `power-profiles-daemon`; `slow` = "what's slowing me down"), `chakra-battery` (the manual's "Battery AI", *honestly a heuristic advisor over `upower` telemetry, not ML* — status/health + `advise` + `save`), `chakra-search` (one CLI query across files/packages/processes/units/`$PATH` — the terminal complement to KRunner + Baloo), `chakra-clip` (the clipboard from the shell — get/set/history-via-Klipper/clear, X11 + Wayland). Plasma already ships the GUI layer (powerdevil, Klipper, KRunner/Baloo); this is the engine/CLI on top. Deferred: ML for battery/perf, a custom search/clipboard UI, undervolting/thermal/GPU tuning, persistent tuning (needs the installer). → `performance/`
+
 ## In progress
 
-*(nothing active — Phase 12 is next)*
+*(nothing active — Phase 13 is next)*
 
 ## Planned
 
-- **Phase 12 — Performance & daily-use polish.** Performance Engine, Battery AI, Search, Clipboard.
 - **Phase 13 — Security research environment.** Chakra Lab, Chakra Reporter — built on Phase 8's Sandbox and Phase 10's containers. → `security-workspace/`, `isolation/`
 - **Phase 14 — Identity & advanced boot hardening.** Passkeys, FIDO2, biometrics; matured boot chain.
 - **Phase 15 — Mobile ecosystem.** Link (pairing) → Sync → Share → Find, in that order. → `mobile/`

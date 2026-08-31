@@ -1024,8 +1024,23 @@ EOF
   done < "$menu_cfg/tools.list"
 }
 
+apply_performance() {
+  log "Installing Chakra Performance & daily-use tools (Phase 12: Perf, Battery, Search, Clip)..."
+  local bin_dir="$ROOTFS/usr/lib/chakra/bin"
+  mkdir -p "$bin_dir"
+  local f name
+  for f in "$PROJECT_ROOT/performance/bin/"*; do
+    name="$(basename "$f")"
+    cp "$f" "$bin_dir/$name"
+    chmod +x "$bin_dir/$name"
+    ln -sf "/usr/lib/chakra/bin/$name" "$ROOTFS/usr/local/bin/$name"
+  done
+  # chakra-perf + chakra-battery get their menu entries from
+  # config/maintenance-menu/tools.list, built by apply_maintenance below.
+}
+
 apply_maintenance() {
-  log "Installing Chakra System Maintenance (Phase 11: Fixer, Update, Clean, Snapshot + recovery)..."
+  log "Installing Chakra System Maintenance (Phase 11: Fixer, Update, Clean, Snapshot + recovery; + Phase 12 Perf/Battery menu)..."
   local menu_cfg="$PROJECT_ROOT/config/maintenance-menu"
   local apps_dir="$ROOTFS/usr/share/applications"
   local dirs_dir="$ROOTFS/usr/share/desktop-directories"
@@ -1138,6 +1153,7 @@ main() {
   apply_permission_enforcement
   apply_chakra_shield
   apply_dev_tools
+  apply_performance
   apply_maintenance
   cleanup_mounts
   build_squashfs

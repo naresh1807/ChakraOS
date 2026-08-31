@@ -4,6 +4,20 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Dates ar
 
 ## [Unreleased]
 
+## 2026-08-31 — Phase 12: performance & daily-use polish
+
+### Added
+- `chakra-perf` — Performance Engine: power profile / CPU governor / swappiness / memory-swap pressure / top hogs; `sudo chakra-perf {performance|balanced|powersave}` (via `power-profiles-daemon`, sysfs governor fallback); `chakra-perf slow` diagnoses current slowness. `--json`.
+- `chakra-battery` — the manual's "Battery AI", implemented honestly as a heuristic advisor over `upower` telemetry (no ML): `status` (charge/health/drain), `advise` (estimate + concrete "turn these off"), `sudo chakra-battery save` (apply the power-saving set). Clean "no battery" path for desktops/VMs.
+- `chakra-search` — one query across files (`plocate`), installed packages, running processes, systemd units, `$PATH` commands, grouped. `--update` refreshes the index. The CLI complement to KRunner + Baloo.
+- `chakra-clip` — terminal clipboard: `get` / `set` / `history` (Klipper via D-Bus) / `pick` / `clear`; X11 (`xclip`) + Wayland (`wl-clipboard`).
+- `chakra-perf` + `chakra-battery` join the System Maintenance menu; `chakra-search` + `chakra-clip` are CLI-first. `apply_performance()` in `build_iso.sh`.
+- Packages: `power-profiles-daemon`, `powertop`, `plocate`, `xclip`, `wl-clipboard`.
+
+### Design / deferred
+- Plasma already ships the GUI layer (powerdevil, Klipper, KRunner/Baloo) — Phase 12 is the engine/CLI on top, not a replacement.
+- Deferred: ML for battery/performance, a custom search/clipboard UI, undervolting/thermal/GPU tuning, persistent tuning (needs an installer).
+
 ## 2026-08-31 — Phase 11: system maintenance & reliability
 
 ### Added

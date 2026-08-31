@@ -1,0 +1,95 @@
+#!/bin/bash
+# chakra-battery -- Chakra's battery advisor.
+#
+# The master manual calls this "Battery AI". HONESTLY: it's a heuristic
+# advisor, not a machine-learning model. It reads the real numbers
+# (upower / sysfs), works out an estimate from the current drain, and
+# gives you a concrete list of things to turn off -- which is what
+# "battery AI" means in practice for a system this size.
+#
+# Usage:
+#   chakra-battery            status + health
+#   chakra-battery advise     estimate + what to turn off to last longer
+#   sudo chakra-battery save  apply the power-saving set (session-scoped)
+set -u
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+BAT="$(upower -e 2>/dev/null | grep -m1 -i 'battery_BAT')"
+AC="$(upower -e 2>/dev/null | grep -m1 -iE 'line_power|AC')"
+
+_field() { upower -i "$1" 2>/dev/null | awk -F: -v k="$2" '$0 ~ k {gsub(/^ +| +$/,"",$2); print $2; exit}'; }
+
+no_battery() {
+  echo "Chakra Battery"
+  echo "============="
+  if [[ -n "$AC" ]]; then
+    online="$(_field "$AC" 'online')"
+    echo "No battery detected -- this looks like a desktop / VM."
+    echo "AC power: ${online:-unknown}"
+  else
+    echo "No battery and no AC adapter reported (VM without ACPI power?)."
+  fi
+  echo
+  echo "chakra-perf handles CPU/power profiles regardless of battery."
+}
+
+[[ -z "$BAT" ]] && { no_battery; exit 0; }
+
+state="$(_field "$BAT" 'state')"
+pct="$(_field "$BAT" 'percentage')"
+rate="$(_field "$BAT" 'energy-rate')"
+t_empty="$(_field "$BAT" 'time to empty')"
+t_full="$(_field "$BAT" 'time to full')"
+cap="$(_field "$BAT" 'capacity')"          # health: current vs design
+model="$(_field "$BAT" 'model')"
+
+cmd="${1:-status}"
+case "$cmd" in
+  status)
+    echo "Chakra Battery"
+    echo "============="
+    echo "Model:     ${model:-unknown}"
+    echo "Charge:    ${pct:-?}   (state: ${state:-?})"
+    echo "Draw:      ${rate:-?}"
+    [[ -n "$t_empty" ]] && echo "Time left: $t_empty"
+    [[ -n "$t_full"  ]] && echo "Time to full: $t_full"
+    if [[ -n "$cap" ]]; then
+      cnum="${cap%\%}"
+      echo -n "Health:    $cap of design capacity"
+      awk -v c="$cnum" 'BEGIN{print (c<70)?"   -> worn, consider replacement":(c<85)?"   -> some wear":"   -> good"}'
+    fi
+    echo
+    echo "'chakra-battery advise' for an estimate + what to turn off."
+    ;;
+  advise)
+    echo "Chakra Battery -- advice"
+    echo "======================="
+    echo "Now: ${pct:-?} , drawing ${rate:-?} , ${state:-?}."
+    [[ -n "$t_empty" ]] && echo "At this rate: ~$t_empty remaining."
+    echo
+    echo "To stretch it:"
+    # profile
+    if command -v powerprofilesctl >/dev/null 2>&1 && [[ "$(powerprofilesctl get 2>/dev/null)" != "power-saver" ]]; then
+      echo "  - switch to power-saver:   sudo chakra-perf powersave"
+    fi
+    echo "  - drop screen brightness (biggest single win on a laptop)"
+    # top power-drawing procs (powertop if present)
+    if command -v powertop >/dev/null 2>&1; then
+      echo "  - close the top power users:"
+      timeout 8 powertop --quiet --time=3 --csv=/tmp/.chakra-pt.csv >/dev/null 2>&1 || true
+      awk -F';' '/^ *[0-9.]+ (mW|W);/{gsub(/^ +/,"",$1); print "      "$1"  "$NF}' /tmp/.chakra-pt.csv 2>/dev/null | head -5
+      rm -f /tmp/.chakra-pt.csv
+    fi
+    echo "  - turn off Bluetooth if unused:   rfkill block bluetooth"
+    echo "  - 'sudo chakra-battery save' applies the safe set (profile + tunables)"
+    ;;
+  save)
+    [[ $EUID -eq 0 ]] || { echo "sudo chakra-battery save" >&2; exit 1; }
+    command -v powerprofilesctl >/dev/null 2>&1 && powerprofilesctl set power-saver 2>/dev/null && echo "power profile -> power-saver"
+    sysctl -q -w vm.laptop_mode=5 2>/dev/null && echo "vm.laptop_mode -> 5"
+    for f in /sys/class/net/w*/device/power/control; do echo auto > "$f" 2>/dev/null && echo "wifi runtime PM -> auto"; done
+    command -v rfkill >/dev/null 2>&1 && rfkill block bluetooth 2>/dev/null && echo "bluetooth -> blocked"
+    echo "Done (session-scoped -- reverts on reboot)."
+    ;;
+  *) echo "usage: chakra-battery {status|advise|save}" >&2; exit 1 ;;
+esac

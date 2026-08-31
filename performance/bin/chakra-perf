@@ -1,0 +1,96 @@
+#!/bin/bash
+# chakra-perf -- Chakra Performance Engine.
+#
+# Shows the knobs that actually matter for responsiveness (power
+# profile, CPU governor, swappiness, memory/swap pressure, the top
+# resource hogs) and switches between performance / balanced / powersave
+# in one call. It drives power-profiles-daemon where present (which
+# Plasma's own battery applet also uses), and falls back to the sysfs
+# CPU governor otherwise.
+#
+# Usage:
+#   chakra-perf                    current state
+#   sudo chakra-perf performance   |  balanced  |  powersave
+#   chakra-perf slow               what's slowing me down right now
+#   chakra-perf --json
+set -u
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+json=0; [[ "${1:-}" == "--json" ]] && { json=1; shift; }
+action="${1:-status}"
+
+_ppd()      { command -v powerprofilesctl >/dev/null 2>&1; }
+_governor() { cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null; }
+_set_gov()  { for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo "$1" > "$f" 2>/dev/null || true; done; }
+_swappiness(){ sysctl -n vm.swappiness 2>/dev/null; }
+
+read -r mem_tot mem_avail < <(awk '/MemTotal/{t=$2}/MemAvailable/{a=$2}END{print t, a}' /proc/meminfo 2>/dev/null)
+swap_used=$(awk '/SwapTotal/{t=$2}/SwapFree/{f=$2}END{print (t-f)/1024}' /proc/meminfo 2>/dev/null)
+load1=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null)
+ncpu=$(nproc 2>/dev/null || echo 1)
+
+case "$action" in
+  performance|balanced|powersave)
+    [[ $EUID -eq 0 ]] || { echo "chakra-perf $action needs root: sudo chakra-perf $action" >&2; exit 1; }
+    if _ppd; then
+      powerprofilesctl set "$([[ "$action" == balanced ]] && echo balanced || ([[ "$action" == performance ]] && echo performance || echo power-saver))" 2>/dev/null \
+        && echo "power-profiles-daemon set to '$action'."
+    else
+      case "$action" in performance) g=performance;; powersave) g=powersave;; *) g=schedutil;; esac
+      _set_gov "$g"; echo "CPU governor set to '$(_governor)' (no power-profiles-daemon)."
+    fi
+    case "$action" in
+      performance) sysctl -q -w vm.swappiness=10 2>/dev/null ;;
+      powersave)   sysctl -q -w vm.swappiness=60 2>/dev/null ;;
+      *)           sysctl -q -w vm.swappiness=60 2>/dev/null ;;
+    esac
+    echo "swappiness now $(_swappiness). (session-scoped on a live system)"
+    exit 0
+    ;;
+  slow)
+    echo "Chakra Perf -- what's slowing you down"
+    echo "====================================="
+    printf 'Load:        %s  (over %s CPUs -> %s)\n' "$load1" "$ncpu" \
+      "$(awk -v l="$load1" -v n="$ncpu" 'BEGIN{r=l/n; print (r>1.5)?"OVERLOADED":(r>0.9)?"busy":"fine"}')"
+    printf 'Memory:      %d MB available of %d MB  %s\n' "$((mem_avail/1024))" "$((mem_tot/1024))" \
+      "$(awk -v a="$mem_avail" -v t="$mem_tot" 'BEGIN{print (a/t<0.1)?"-> LOW, things will swap/stall":(a/t<0.2)?"-> getting tight":""}')"
+    printf 'Swap in use: %d MB  %s\n' "${swap_used%.*}" "$(awk -v s="${swap_used%.*}" 'BEGIN{print (s>200)?"-> actively swapping, this hurts":""}')"
+    io=$(awk '{print $10}' /proc/loadavg 2>/dev/null; ps -eo stat= 2>/dev/null | grep -c '^D')
+    printf 'Processes in uninterruptible I/O wait: %s\n' "$(ps -eo stat= | grep -c '^D')"
+    echo
+    echo "Top by CPU:"
+    ps -eo pcpu,pmem,comm --sort=-pcpu --no-headers 2>/dev/null | head -5 | sed 's/^/  /'
+    echo "Top by memory:"
+    ps -eo pmem,pcpu,comm --sort=-pmem --no-headers 2>/dev/null | head -5 | sed 's/^/  /'
+    exit 0
+    ;;
+esac
+
+# --- status ---------------------------------------------------------
+if _ppd; then
+  cur="$(powerprofilesctl get 2>/dev/null)"
+  avail="$(powerprofilesctl list 2>/dev/null | awk '/^[* ] [a-z]/{gsub(/[:* ]/,""); print}' | paste -sd, -)"
+else
+  cur="(no power-profiles-daemon)"; avail=""
+fi
+gov="$(_governor)"
+
+if [[ $json -eq 1 ]]; then
+  jq -n --arg profile "$cur" --arg profiles "$avail" --arg governor "${gov:-unknown}" \
+    --argjson swappiness "$(_swappiness || echo 0)" --arg load "$load1" \
+    --argjson mem_avail_mb "$((mem_avail/1024))" --argjson swap_used_mb "${swap_used%.*}" \
+    '{power_profile:$profile,available:($profiles|split(",")-[""]),cpu_governor:$governor,swappiness:$swappiness,load1:$load,mem_available_mb:$mem_avail_mb,swap_used_mb:$swap_used_mb}'
+  exit 0
+fi
+
+echo "Chakra Performance Engine"
+echo "========================"
+echo "Power profile:   $cur${avail:+   (available: $avail)}"
+echo "CPU governor:    ${gov:-unknown (no cpufreq -- VM?)}"
+echo "Swappiness:      $(_swappiness)"
+echo "Load (1m):       $load1  over $ncpu CPUs"
+echo "Memory avail:    $((mem_avail/1024)) MB / $((mem_tot/1024)) MB"
+echo "Swap in use:     ${swap_used%.*} MB"
+echo
+echo "Switch:  sudo chakra-perf {performance|balanced|powersave}"
+echo "Diagnose: chakra-perf slow"

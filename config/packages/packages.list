@@ -68,6 +68,15 @@ podman
 # are already in the base.
 needrestart
 
+# Phase 12: performance & daily-use. power-profiles-daemon (Plasma's
+# battery applet drives it too), powertop (battery diagnostics),
+# plocate (fast file search), xclip + wl-clipboard (terminal clipboard).
+power-profiles-daemon
+powertop
+plocate
+xclip
+wl-clipboard
+
 # Audio foundation
 pipewire
 pipewire-pulse

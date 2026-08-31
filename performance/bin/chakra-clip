@@ -1,0 +1,61 @@
+#!/bin/bash
+# chakra-clip -- the clipboard, from the terminal.
+#
+# Plasma's Klipper already keeps clipboard history in the system tray.
+# This is the CLI: read it, set it, browse the history, clear it --
+# handy in shell workflows (chakra-clip | grep, some-cmd | chakra-clip).
+# Works under X11 (xclip) and Wayland (wl-clipboard); history comes from
+# Klipper over D-Bus.
+#
+# Usage:
+#   chakra-clip                 print the current clipboard
+#   chakra-clip set <text>      set it   (or:  echo text | chakra-clip)
+#   chakra-clip history [n]     last n Klipper entries (default 15)
+#   chakra-clip pick            fzf/number-pick from history into the clipboard
+#   chakra-clip clear
+set -u
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+_wayland() { [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-copy >/dev/null 2>&1; }
+
+get()  { if _wayland; then wl-paste -n 2>/dev/null; else xclip -selection clipboard -o 2>/dev/null; fi; }
+set_() { if _wayland; then wl-copy 2>/dev/null; else xclip -selection clipboard -i 2>/dev/null; fi; }
+
+klipper_hist() {
+  local n="${1:-15}" i out
+  command -v qdbus >/dev/null 2>&1 || { echo "(qdbus missing -- no Klipper history)"; return; }
+  for ((i=0; i<n; i++)); do
+    out="$(qdbus org.kde.klipper /klipper getClipboardHistoryItem "$i" 2>/dev/null)"
+    [[ -z "$out" ]] && break
+    printf '%2d  %s\n' "$i" "$(tr '\n' ' ' <<<"$out" | cut -c1-100)"
+  done
+}
+
+cmd="${1:-get}"
+case "$cmd" in
+  get|"")
+    if [[ ! -t 0 ]]; then set_; else get; fi
+    ;;
+  set)
+    shift
+    if [[ $# -gt 0 ]]; then printf '%s' "$*" | set_; else set_; fi
+    echo "clipboard set."
+    ;;
+  history|hist) klipper_hist "${2:-15}" ;;
+  pick)
+    mapfile -t items < <(klipper_hist 30)
+    [[ ${#items[@]} -eq 0 ]] && { echo "no history."; exit 1; }
+    printf '%s\n' "${items[@]}"
+    read -r -p "pick #: " n
+    [[ "$n" =~ ^[0-9]+$ ]] || exit 1
+    val="$(qdbus org.kde.klipper /klipper getClipboardHistoryItem "$n" 2>/dev/null)"
+    [[ -n "$val" ]] && { printf '%s' "$val" | set_; echo "-> clipboard"; }
+    ;;
+  clear)
+    printf '' | set_
+    qdbus org.kde.klipper /klipper clearClipboardHistory 2>/dev/null || true
+    echo "cleared."
+    ;;
+  -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "usage: chakra-clip {get|set <text>|history [n]|pick|clear}" >&2; exit 1 ;;
+esac
