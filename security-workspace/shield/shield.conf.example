@@ -1,0 +1,18 @@
+# Chakra Shield configuration. Installed to /etc/chakra/shield.conf.
+# Restart the service after editing: sudo systemctl restart chakra-shield
+
+# How often the watch loop runs, in seconds.
+SHIELD_INTERVAL=60
+
+# 0 = alert only (default). Shield logs + notifies but changes nothing.
+# 1 = also add an nftables drop rule for a newly-exposed port or an
+#     auth-failure source. Off by default ON PURPOSE: this is a
+#     pentesting OS -- you routinely open listeners and hammer hosts on
+#     purpose, and auto-blocking them would be wrong far more often than
+#     right. Turn this on only if you know the box should be quiet.
+#     Runtime rules are cleared on `systemctl reload nftables` / reboot.
+SHIELD_ACTIVE_BLOCK=0
+
+# Failed authentications from a single source IP within one SHIELD_INTERVAL
+# before Shield raises an alert (and, with active-block, drops it).
+SHIELD_AUTH_FAIL_THRESHOLD=10

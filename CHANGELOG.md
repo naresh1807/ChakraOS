@@ -4,8 +4,31 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Dates ar
 
 ## [Unreleased]
 
-### In progress
-- Phase 8 loose ends: `usbguard-notifier` in the session (a blocked USB insertion is now *notified*, not silent) via an `IPCAccessControl.d/:sudo` listen grant + `usbguard-dbus.service` + autostart; and making the Fluent look-and-feel actually active (`LookAndFeelPackage`) + rewriting Fluent-kde's hardcoded `/home/vince/...` wallpaper path so the desktop stops booting black / on Debian's wallpaper.
+## 2026-08-31 — Phase 9: active defense (Chakra Shield)
+
+### Added
+- `chakra-score` — a deterministic Security Score 0–100 (`--json`) with a per-check pass/warn/fail breakdown and a one-line fix each: nftables default-deny, hardening sysctls actually live, auditd, USB Guard implicit-block, Shield running, pending updates, failed units, network exposure, the audit trail; plus notes on what's N/A for a live system.
+- `chakra-shield` + `chakra-shield.service` — a rule-based active-defense watcher: every `SHIELD_INTERVAL` it diffs services listening on all interfaces and scans new `/var/log/audit/audit.log` lines for auth-failure bursts. Findings → journald (tag `chakra-shield`) + `/var/lib/chakra/shield/alerts.jsonl` + the Chakra Audit trail. CLI: `status` / `check` / `unblock` / `score`.
+- `chakra-shield-notify` — session autostart that turns the `chakra-shield` journal tag into desktop notifications.
+- `chakra-usb-prompt` — replaces usbguard-notifier's autostart for the insertion case: a blocked USB device now raises Allow / Allow-and-remember / Keep blocked, wired to `usbguard allow-device`.
+- Package: `libnotify-bin` (`notify-send`). `IPCAccessControl.d/chakra-desktop` gains `modify` so the session can authorise a device.
+- "Chakra Shield" and "Security Score" entries in the Chakra Tools menu.
+
+### Design
+- Shield's nftables blocking is **opt-in** (`SHIELD_ACTIVE_BLOCK=0` default): this is a pentesting OS, and auto-blocking the operator's deliberate listeners and peers would be wrong far more often than right. Runtime rules clear on `nftables` reload / reboot.
+- No ML/anomaly detection, no IDS engine (Suricata/Snort), no GUI — Shield's rules are simple and legible, reachable from the menu as CLI like Phase 6.
+
+## 2026-08-31 — Phase 8 loose ends
+
+### Added
+- `usbguard-notifier` in the session so a blocked USB insertion is *notified* rather than silent (`IPCAccessControl.d/:sudo` listen grant + `usbguard-dbus.service` + autostart).
+
+### Fixed
+- The Fluent look-and-feel was never made active (`apply_windows11_theme` set icons/colours/kvantum only), so Plasma generated its first desktop from Debian's default LnF — Debian wallpaper, plain panel. Now sets `LookAndFeelPackage` + the matching plasma desktop theme.
+- Fluent-kde's `layouts/org.kde.plasma.desktop-layout.js` hardcodes the wallpaper as `file:///home/vince/.local/share/wallpapers/...jpg` (the theme author's home dir) → black desktop here. `sed`-rewritten to the Chakra wallpaper at build time; also written into the Debian/Breeze LnF defaults, with a self-deleting first-login `plasma-apply-wallpaperimage` autostart as a safety net.
+
+### Build
+- `install_metasploit` / `install_nikto` / `install_burpsuite` / the Fluent theme clone now short-circuit when their artifact is already in the persistent `build/rootfs` (`--clean` still forces a full reinstall) — a no-clean rebuild drops from ~35 min to ~14. Added `curl --connect-timeout`/`--max-time` so a hung endpoint fails fast into the existing non-fatal path.
 
 ## 2026-08-29 — Phase 8: permission & privacy enforcement
 

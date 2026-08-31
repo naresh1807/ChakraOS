@@ -1,0 +1,207 @@
+#!/bin/bash
+# chakra-score -- Chakra Security Score.
+#
+# A deterministic, read-only posture check scored 0-100, with a
+# per-check pass/warn/fail breakdown and a one-line fix for anything
+# that isn't green. This is NOT a full CIS/Lynis audit -- it checks
+# Chakra's own declared security posture (the things Phases 5/8 set up)
+# plus a few universal basics, so "what is my score and why" has a
+# concrete, honest answer.
+#
+# Risk tier 0 (read-only -- it never changes anything).
+# Usage: chakra-score [--json]
+set -u
+
+# Debian keeps /usr/sbin out of a normal user's PATH, but this tool
+# shells out to nft / sysctl / ss / usbguard. Put the admin dirs on PATH
+# so the checks reflect reality instead of "command not found".
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+json_mode=0
+[[ "${1:-}" == "--json" ]] && json_mode=1
+
+# checks[] entries: "name|weight|status|detail|fix"   status in pass|warn|fail
+checks=()
+add() { checks+=("$1|$2|$3|$4|$5"); }
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# --- Firewall: nftables active AND input hook defaulting to drop --------
+# `nft list ruleset` needs root, so as the unprivileged user we confirm
+# the drop policy from the shipped config that nftables.service loads.
+fw_drop=1
+if nft list ruleset 2>/dev/null | grep -Eq 'hook input.*policy drop'; then :
+elif grep -Eq 'hook input.*policy drop' /etc/nftables.conf 2>/dev/null; then :
+else fw_drop=0; fi
+if systemctl is-active --quiet nftables 2>/dev/null; then
+  if [[ $fw_drop -eq 1 ]]; then
+    add "Firewall -- nftables default-deny inbound" 20 pass "active; input chain policy drop" ""
+  else
+    add "Firewall -- nftables default-deny inbound" 20 warn "nftables active but no default-drop input policy found" "review /etc/nftables.conf, then: sudo nft -f /etc/nftables.conf"
+  fi
+else
+  add "Firewall -- nftables default-deny inbound" 20 fail "nftables is not active" "sudo systemctl enable --now nftables"
+fi
+
+# --- Kernel / network hardening: are the declared sysctls actually live?
+declare -A want=(
+  [kernel.kptr_restrict]=2
+  [kernel.dmesg_restrict]=1
+  [net.ipv4.tcp_syncookies]=1
+  [net.ipv4.conf.all.rp_filter]=1
+  [net.ipv4.conf.all.accept_redirects]=0
+  [net.ipv4.icmp_echo_ignore_broadcasts]=1
+)
+h_ok=0 h_tot=0 h_miss=""
+for k in "${!want[@]}"; do
+  h_tot=$((h_tot + 1))
+  if [[ "$(sysctl -n "$k" 2>/dev/null)" == "${want[$k]}" ]]; then
+    h_ok=$((h_ok + 1))
+  else
+    h_miss+="${h_miss:+, }$k"
+  fi
+done
+if [[ $h_ok -eq $h_tot ]]; then
+  add "Kernel/network hardening" 15 pass "$h_ok/$h_tot hardening sysctls applied" ""
+elif [[ $h_ok -gt 0 ]]; then
+  add "Kernel/network hardening" 15 warn "$h_ok/$h_tot applied; missing: $h_miss" "sudo sysctl --system"
+else
+  add "Kernel/network hardening" 15 fail "hardening sysctls not applied" "sudo sysctl --system"
+fi
+
+# --- OS audit logging (auditd) ----------------------------------------
+if systemctl is-active --quiet auditd 2>/dev/null; then
+  add "OS audit logging (auditd)" 10 pass "running" ""
+else
+  add "OS audit logging (auditd)" 10 fail "not running" "sudo systemctl enable --now auditd"
+fi
+
+# --- USB Guard: running and blocking unknown devices ------------------
+if systemctl is-active --quiet usbguard 2>/dev/null; then
+  imp="$(usbguard get-parameter ImplicitPolicyTarget 2>/dev/null || true)"
+  # fall back to the shipped config if the IPC query isn't permitted
+  [[ -z "$imp" ]] && imp="$(sed -n 's/^ImplicitPolicyTarget=//p' /etc/usbguard/usbguard-daemon.conf 2>/dev/null)"
+  if [[ "$imp" == "block" ]]; then
+    add "USB Guard -- block unknown devices" 10 pass "running; implicit target = block" ""
+  else
+    add "USB Guard -- block unknown devices" 10 warn "running but implicit target is '${imp:-unknown}', not 'block'" "sudo usbguard set-parameter ImplicitPolicyTarget block"
+  fi
+else
+  add "USB Guard -- block unknown devices" 10 fail "not running" "sudo systemctl enable --now usbguard"
+fi
+
+# --- Chakra Shield: is active defense watching? -----------------------
+if systemctl is-active --quiet chakra-shield 2>/dev/null; then
+  add "Chakra Shield -- active-defense watcher" 10 pass "running" ""
+else
+  add "Chakra Shield -- active-defense watcher" 10 warn "not running" "sudo systemctl enable --now chakra-shield"
+fi
+
+# --- Pending updates -------------------------------------------------
+upd=$(apt-get -s -o Debug::NoLocking=true upgrade 2>/dev/null | grep -c '^Inst ')
+if [[ "$upd" -eq 0 ]]; then
+  add "Software updates" 10 pass "no pending upgrades" ""
+elif [[ "$upd" -lt 15 ]]; then
+  add "Software updates" 10 warn "$upd package(s) upgradable" "sudo apt update && sudo apt full-upgrade"
+else
+  add "Software updates" 10 fail "$upd package(s) upgradable" "sudo apt update && sudo apt full-upgrade"
+fi
+
+# --- Failed systemd units ------------------------------------------
+f=$(systemctl --failed --no-legend 2>/dev/null | wc -l)
+if [[ "$f" -eq 0 ]]; then
+  add "systemd units" 5 pass "no failed units" ""
+else
+  add "systemd units" 5 warn "$f failed unit(s)" "systemctl --failed"
+fi
+
+# --- Network exposure: services listening on all interfaces ----------
+exp=$(ss -H -tuln 2>/dev/null | awk '$5 ~ /^(0\.0\.0\.0|\[::\]|\*):/ {c++} END{print c+0}')
+if [[ "$exp" -eq 0 ]]; then
+  add "Network exposure" 10 pass "nothing listening on all interfaces" ""
+elif [[ "$exp" -le 2 ]]; then
+  add "Network exposure" 10 warn "$exp service(s) listening on 0.0.0.0/[::]" "chakra-netguard  # review; close what you don't need"
+else
+  add "Network exposure" 10 fail "$exp services listening on 0.0.0.0/[::]" "chakra-netguard  # review; close what you don't need"
+fi
+
+# --- Chakra Audit trail present and writable ------------------------
+if [[ -w /var/log/chakra/audit/sentinel.jsonl ]]; then
+  add "Chakra Audit trail" 5 pass "present and writable by this user" ""
+elif [[ -e /var/log/chakra/audit/sentinel.jsonl ]]; then
+  add "Chakra Audit trail" 5 warn "present but not writable by $(id -un)" "the desktop user should be in the 'adm' group"
+else
+  add "Chakra Audit trail" 5 fail "missing" "reinstall chakra-core / re-run systemd-tmpfiles"
+fi
+
+# --- Notes (context, not scored) ----------------------------------
+notes=()
+if [[ -d /sys/firmware/efi ]]; then
+  if have mokutil && mokutil --sb-state 2>/dev/null | grep -qi 'enabled'; then
+    notes+=("Secure Boot: enabled")
+  else
+    notes+=("Secure Boot: disabled/unavailable -- deferred until there's an installer (see core/security/README.md)")
+  fi
+else
+  notes+=("Secure Boot: legacy BIOS boot, not applicable")
+fi
+notes+=("Full-disk encryption: N/A on a live ISO -- applies once installed to a persistent disk")
+
+# --- Score ---------------------------------------------------------
+possible=0 got=0
+for c in "${checks[@]}"; do
+  IFS='|' read -r n w s d fx <<<"$c"
+  possible=$((possible + w))
+  case "$s" in
+    pass) got=$((got + w)) ;;
+    warn) got=$((got + w / 2)) ;;
+  esac
+done
+score=0
+[[ $possible -gt 0 ]] && score=$(( (100 * got + possible / 2) / possible ))
+grade=F
+[[ $score -ge 60 ]] && grade=D
+[[ $score -ge 70 ]] && grade=C
+[[ $score -ge 80 ]] && grade=B
+[[ $score -ge 90 ]] && grade=A
+
+if [[ $json_mode -eq 1 ]]; then
+  {
+    printf '{"score":%d,"grade":"%s","checks":[' "$score" "$grade"
+    first=1
+    for c in "${checks[@]}"; do
+      IFS='|' read -r n w s d fx <<<"$c"
+      [[ $first -eq 1 ]] || printf ','
+      first=0
+      jq -nc --arg name "$n" --argjson weight "$w" --arg status "$s" --arg detail "$d" --arg fix "$fx" \
+        '{name:$name,weight:$weight,status:$status,detail:$detail,fix:$fix}'
+    done
+    printf '],"notes":['
+    first=1
+    for nt in "${notes[@]}"; do
+      [[ $first -eq 1 ]] || printf ','
+      first=0
+      jq -nc --arg n "$nt" '$n'
+    done
+    printf ']}'
+    echo
+  }
+else
+  echo "Chakra Security Score"
+  echo "====================="
+  echo "  $score / 100   (grade $grade)"
+  echo
+  for c in "${checks[@]}"; do
+    IFS='|' read -r n w s d fx <<<"$c"
+    case "$s" in
+      pass) mark="[ OK ]" ;;
+      warn) mark="[WARN]" ;;
+      fail) mark="[FAIL]" ;;
+    esac
+    printf '  %s  %-38s %s\n' "$mark" "$n" "$d"
+    [[ "$s" != "pass" && -n "$fx" ]] && printf '         fix: %s\n' "$fx"
+  done
+  echo
+  echo "Notes:"
+  for nt in "${notes[@]}"; do printf '  - %s\n' "$nt"; done
+fi

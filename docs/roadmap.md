@@ -17,13 +17,14 @@ Phases are ordered by dependency, not just topic — each phase only depends on 
 
 - **Phase 8 — Permission & privacy enforcement.** The real `usbguard` daemon (bootstrapped to allow boot-time devices, block later insertions — the first thing to enforce a `/etc/chakra/policy.d/` policy), with `usbguard-notifier` in the session so a blocked insertion raises a desktop notification instead of being silent; Chakra Vault (file-backed LUKS2 via `cryptsetup`), File Inspector (SHA256/MIME/perms/setuid/EXIF, `--json` like the Phase 6 tools), and Sandbox (a `firejail` wrapper — private fs, no network). AppGuard and the rest of Privacy Center are **deferred** — they need a real permission-broker/portal layer between apps and hardware that this desktop doesn't have; a fake AppGuard that intercepts nothing would be worse than none (see `privacy/README.md`). Also fixed here: the Chakra Audit trail and `chakra-loglens --source security` silently no-op'd when run unprivileged (their normal path) — now bridged via the `adm` group (see `core/security/README.md`); and the Fluent look-and-feel is now actually made active (`LookAndFeelPackage`) so the desktop stops falling back to Debian's wallpaper and panel. → `privacy/`, `isolation/`, `core/security/`
 
+- **Phase 9 — Active defense: Chakra Shield.** `chakra-score` — a deterministic Security Score 0–100 with a per-check breakdown and one-line fixes (nftables default-deny, hardening sysctls *actually live*, auditd, USB Guard blocking, Shield running, updates, exposure, audit trail). `chakra-shield` — a systemd service that diffs network exposure and scans the OS audit log for auth-failure bursts; each finding → journald + `alerts.jsonl` + the Chakra Audit trail, with a `chakra-shield-notify` session bridge for desktop pop-ups. Blocking (nftables drop rules) is **opt-in** (`SHIELD_ACTIVE_BLOCK`, off by default — auto-blocking a pentest OS's deliberate listeners/peers would be wrong constantly). And `chakra-usb-prompt` — the interactive USB "ask" Phase 8 stubbed: a blocked insertion now pops Allow / Allow-and-remember / Keep blocked, wired to the usbguard IPC (the ACL gains `modify` for the session — the deliberate trade-off). Deferred: no ML/anomaly detection, no IDS engine (Suricata), no GUI. → `security-workspace/`
+
 ## In progress
 
-*(nothing active — Phase 9 is next)*
+*(nothing active — Phase 10 is next)*
 
 ## Planned
 
-- **Phase 9 — Active defense: Chakra Shield.** Shield + Security Score, built on Phase 6's observability and Phase 8's enforcement. Also the natural home for a real interactive USB "ask" prompt — Phase 8 ships `usbguard-notifier` (a blocked insertion is now *notified*, not silent), but a notification with Allow / Block / Allow-permanently actions wired to the usbguard IPC is still to build, and means letting a session component authorise hardware. → `security-workspace/`
 - **Phase 10 — Developer tooling suite.** DevHub, Env Manager, Port Watch, API Watch, Container Center. No AI/policy dependency — could run in parallel with 6–9. → `developer-tools/`
 - **Phase 11 — System maintenance & reliability.** Update, Snapshot, Recovery, Fixer, Clean, Store, Build Center. → `updater/`, `recovery/`, `app-center/`, `installer/`
 - **Phase 12 — Performance & daily-use polish.** Performance Engine, Battery AI, Search, Clipboard.

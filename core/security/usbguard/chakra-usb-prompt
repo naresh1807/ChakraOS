@@ -1,0 +1,74 @@
+#!/bin/bash
+# chakra-usb-prompt -- the interactive USB "ask" for Chakra OS (Phase 9).
+#
+# Phase 8 shipped usbguard-notifier: a blocked device insertion became a
+# *notification* instead of nothing, but there was no way to act on it
+# except a manual `sudo usbguard allow-device`. usb-storage.policy.json
+# says unknown storage should be *asked about* in Daily mode -- this is
+# that ask.
+#
+# Runs in the session (autostarted, replacing usbguard-notifier's
+# autostart). It follows `usbguard watch`; when a device is inserted and
+# blocked it pops a notification with Allow / Keep blocked buttons and,
+# on Allow, calls `usbguard allow-device`.
+#
+# Requires: notify-send (libnotify-bin) + `modify` on the usbguard IPC.
+# Phase 9 grants the latter to the sudo group in
+# IPCAccessControl.d/chakra-desktop -- see this directory's README for
+# why letting a session component authorise hardware is a deliberate,
+# documented trade-off, not an oversight.
+set -u
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+command -v usbguard    >/dev/null 2>&1 || exit 0
+command -v notify-send >/dev/null 2>&1 || exit 0
+
+handle_event() {
+  local line="$1" id name
+  # only inserted-and-blocked devices
+  [[ "$line" == *DevicePresenceChanged* ]] || return 0
+  [[ "$line" == *event=Insert*          ]] || return 0
+  [[ "$line" == *target=block* || "$line" == *"target='block'"* || "$line" == *target=Block* ]] || return 0
+
+  id="$(sed -n "s/.*[^a-z]id=\([0-9]\+\).*/\1/p" <<<"$line")"
+  [[ -n "$id" ]] || return 0
+  name="$(sed -n "s/.*name \"\([^\"]*\)\".*/\1/p" <<<"$line")"
+  [[ -n "$name" ]] || name="$(sed -n "s/.*name='\([^']*\)'.*/\1/p" <<<"$line")"
+  [[ -n "$name" ]] || name="unknown device"
+
+  local choice
+  choice="$(notify-send --wait -a "Chakra USB Guard" -u critical -i drive-removable-media \
+      --action=allow="Allow" --action=allowperm="Allow, and remember" --action=block="Keep blocked" \
+      "USB device blocked" "\"$name\" was plugged in and blocked. Allow it?" 2>/dev/null)"
+
+  case "$choice" in
+    allow)
+      if usbguard allow-device "$id" >/dev/null 2>&1; then
+        result=allowed
+      else
+        result="allow-failed (missing 'modify' IPC privilege?)"
+      fi
+      notify-send -a "Chakra USB Guard" -i drive-removable-media "USB device" "\"$name\": $result" 2>/dev/null || true
+      ;;
+    allowperm)
+      if usbguard allow-device -p "$id" >/dev/null 2>&1; then
+        result="allowed (permanent rule added)"
+      else
+        result="allow-failed (missing 'modify' IPC privilege?)"
+      fi
+      notify-send -a "Chakra USB Guard" -i drive-removable-media "USB device" "\"$name\": $result" 2>/dev/null || true
+      ;;
+    *)
+      result="kept blocked"
+      ;;
+  esac
+
+  command -v chakra-audit-log >/dev/null 2>&1 && \
+    chakra-audit-log --actor chakra-usb-prompt --action "usb.ask" --target "$name" \
+      --risk-tier 2 --approved-by "user (interactive prompt)" --result "${result:-kept blocked}" || true
+}
+
+# -w so it keeps trying if the daemon isn't up yet at login.
+usbguard watch -w 2>/dev/null | while IFS= read -r line; do
+  handle_event "$line"
+done

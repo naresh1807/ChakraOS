@@ -241,9 +241,11 @@ apply_chakra_core() {
   mkdir -p "$ROOTFS/etc/chakra/policy.d" \
            "$ROOTFS/usr/lib/chakra" \
            "$ROOTFS/usr/share/chakra" \
-           "$ROOTFS/var/lib/chakra" \
+           "$ROOTFS/var/lib/chakra/shield" \
            "$ROOTFS/var/log/chakra/audit"
-  chmod 0750 "$ROOTFS/var/lib/chakra"
+  chmod 0755 "$ROOTFS/var/lib/chakra"
+  chmod 2750 "$ROOTFS/var/lib/chakra/shield"
+  chroot "$ROOTFS" chown root:adm /var/lib/chakra/shield || true
 
   # The Chakra Audit trail. /var/log/chakra is adm-readable; the audit/
   # subdir is adm-WRITABLE (setgid) so the unprivileged desktop user (in
@@ -903,6 +905,86 @@ Categories=X-Chakra-Tools;
 EOF
 }
 
+apply_chakra_shield() {
+  log "Installing Chakra Shield (Phase 9: active-defense watcher + Security Score + interactive USB prompt)..."
+  local ws="$PROJECT_ROOT/security-workspace"
+  local sec_cfg="$PROJECT_ROOT/core/security"
+  local bin_dir="$ROOTFS/usr/lib/chakra/bin"
+  local apps_dir="$ROOTFS/usr/share/applications"
+  local units_dir="$ROOTFS/lib/systemd/system"
+  local doc_dir="$ROOTFS/usr/share/doc/chakra-os"
+  mkdir -p "$bin_dir" "$apps_dir" "$units_dir" "$doc_dir" \
+           "$ROOTFS/etc/chakra" "$ROOTFS/etc/xdg/autostart" "$ROOTFS/var/lib/chakra/shield"
+  # adm-readable so `chakra-shield status` works for the desktop user
+  # (chakra-core.conf re-asserts this on every boot).
+  chmod 2750 "$ROOTFS/var/lib/chakra/shield"
+  chroot "$ROOTFS" chown root:adm /var/lib/chakra/shield || true
+
+  # Tools -> canonical chakra bin path + /usr/local/bin.
+  local t
+  for t in "$ws/score/chakra-score" "$ws/shield/chakra-shield" \
+           "$ws/shield/chakra-shield-notify" "$sec_cfg/usbguard/chakra-usb-prompt"; do
+    cp "$t" "$bin_dir/$(basename "$t")"
+    chmod +x "$bin_dir/$(basename "$t")"
+    ln -sf "/usr/lib/chakra/bin/$(basename "$t")" "$ROOTFS/usr/local/bin/$(basename "$t")"
+  done
+
+  # Shield service + config + doc (the .service Documentation= points at the doc).
+  cp "$ws/shield/chakra-shield.service" "$units_dir/chakra-shield.service"
+  cp "$ws/shield/shield.conf.example" "$ROOTFS/etc/chakra/shield.conf"
+  cp "$ws/shield/README.md" "$doc_dir/shield-README.md"
+  chroot "$ROOTFS" systemctl enable chakra-shield.service >/dev/null 2>&1 || true
+
+  # Session autostarts: Shield's desktop-notification bridge, and the
+  # interactive USB prompt -- which REPLACES usbguard-notifier's autostart
+  # for the insertion case (the package stays installed as a fallback).
+  rm -f "$ROOTFS/etc/xdg/autostart/chakra-usbguard-notifier.desktop"
+  cat > "$ROOTFS/etc/xdg/autostart/chakra-shield-notify.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Chakra Shield notifications
+Comment=Desktop notifications for Chakra Shield alerts
+Exec=chakra-shield-notify
+Terminal=false
+OnlyShowIn=KDE;
+X-KDE-autostart-phase=2
+NoDisplay=true
+EOF
+  cat > "$ROOTFS/etc/xdg/autostart/chakra-usb-prompt.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Chakra USB prompt
+Comment=Ask to allow or keep blocking a newly-inserted USB device
+Exec=chakra-usb-prompt
+Terminal=false
+OnlyShowIn=KDE;
+X-KDE-autostart-phase=2
+NoDisplay=true
+EOF
+
+  # Chakra Tools menu entries.
+  cat > "$apps_dir/chakra-tool-dash-Chakra-Shield.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Chakra Shield
+Comment=Active-defense watcher -- status, recent alerts, blocks
+Icon=security-high
+Exec=konsole -e bash -c "chakra-shield status; echo; echo 'Commands: chakra-shield {check|status|unblock <x>|score}'; exec bash"
+Terminal=false
+Categories=X-Chakra-Tools;
+EOF
+  cat > "$apps_dir/chakra-tool-dash-Security-Score.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Security Score
+Comment=Chakra Security Score -- posture 0-100 with a per-check breakdown
+Icon=security-high
+Exec=konsole -e bash -c "chakra-score; echo; echo '--- press Enter to close ---'; read"
+Terminal=false
+Categories=X-Chakra-Tools;
+EOF
+}
+
 build_squashfs() {
   log "Building squashfs from rootfs..."
   mkdir -p "$ISO_STAGE/live" "$ISO_STAGE/boot/grub"
@@ -965,6 +1047,7 @@ main() {
   apply_chakra_tools
   apply_chakra_sentinel
   apply_permission_enforcement
+  apply_chakra_shield
   cleanup_mounts
   build_squashfs
   stage_kernel_and_grub

@@ -1,0 +1,23 @@
+#!/bin/bash
+# chakra-shield-notify -- desktop-notification bridge for Chakra Shield.
+#
+# Shield runs as a system service and can't easily reach the user's
+# session bus, so it just tags its alerts in the journal. This runs in
+# the session (autostarted), follows that tag, and pops a notification
+# per alert. Same split as usbguard-notifier / chakra-usb-prompt.
+#
+# Needs: journal read access (the desktop user is in adm) + notify-send
+# (libnotify-bin). Exits quietly if either is missing.
+set -u
+
+command -v notify-send >/dev/null 2>&1 || exit 0
+command -v journalctl  >/dev/null 2>&1 || exit 0
+
+# Start from "now" so a fresh login doesn't replay the whole boot's alerts.
+journalctl -f -n 0 -o cat -t chakra-shield 2>/dev/null | while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  case "$line" in
+    *"watching"*|*"baseline"*) continue ;;   # startup chatter, not an alert
+  esac
+  notify-send -a "Chakra Shield" -u critical -i security-high "Chakra Shield" "$line" 2>/dev/null || true
+done

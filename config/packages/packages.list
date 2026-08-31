@@ -54,6 +54,10 @@ usbguard-notifier
 cryptsetup
 firejail
 
+# Phase 9: active defense (Chakra Shield). libnotify-bin = notify-send,
+# used by chakra-shield-notify and chakra-usb-prompt for desktop alerts.
+libnotify-bin
+
 # Audio foundation
 pipewire
 pipewire-pulse

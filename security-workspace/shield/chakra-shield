@@ -1,0 +1,254 @@
+#!/bin/bash
+# chakra-shield -- Chakra active-defense watcher.
+#
+# Rule-based, not machine learning. Runs as a systemd service
+# (chakra-shield.service) and, every SHIELD_INTERVAL seconds:
+#
+#   1. diffs the set of services listening on all interfaces against
+#      what it has already seen -- a NEW one raises an alert;
+#   2. reads new /var/log/audit/audit.log lines and, if one source IP
+#      accumulates SHIELD_AUTH_FAIL_THRESHOLD or more failed
+#      authentications within a single SHIELD_INTERVAL, raises an alert.
+#
+# Every alert is: journald (tag chakra-shield, so chakra-shield-notify
+# can pop a desktop notification), an entry in
+# /var/lib/chakra/shield/alerts.jsonl, and a record in the Chakra Audit
+# trail (actor=chakra-shield).
+#
+# Blocking is OPT-IN. With SHIELD_ACTIVE_BLOCK=1 in
+# /etc/chakra/shield.conf, Shield also adds an nftables drop rule for the
+# offending port / source IP. Default is 0 (alert only): this is a
+# pentesting OS, and auto-blocking ports and peers the operator is
+# deliberately using would be wrong far more often than right. Runtime
+# rules live only until the next `systemctl reload nftables` / reboot,
+# by design -- Shield re-evaluates from scratch each boot.
+#
+# CLI:
+#   chakra-shield watch     run the monitoring loop (the service does this)
+#   chakra-shield check     run one pass now and print what it finds
+#   chakra-shield status    running state, mode, recent alerts, blocks
+#   chakra-shield unblock <ip|port>   remove a rule Shield added
+#   chakra-shield score     shorthand for chakra-score
+set -u
+
+# ss / nft / usbguard live in /usr/sbin, which Debian keeps off a normal
+# user's PATH -- `chakra-shield status` is meant to work unprivileged.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+CONF=/etc/chakra/shield.conf
+STATE=/var/lib/chakra/shield
+BIN="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+
+SHIELD_INTERVAL=60
+SHIELD_ACTIVE_BLOCK=0
+SHIELD_AUTH_FAIL_THRESHOLD=10
+# shellcheck disable=SC1090
+[[ -r "$CONF" ]] && source "$CONF" 2>/dev/null
+
+AUDIT_LOG=/var/log/audit/audit.log
+SEEN_PORTS="$STATE/seen-ports.list"
+ALERTS="$STATE/alerts.jsonl"
+BLOCKED="$STATE/blocked.list"
+HEARTBEAT="$STATE/heartbeat"
+POSFILE="$STATE/authlog.pos"
+NFT_TABLE="inet chakra_filter"
+NFT_CHAIN="input"
+
+# The state dir is created + owned by chakra-core as 2750 root:adm:
+# root (the service) writes it, adm (the desktop user) reads it. Don't
+# fail if we're the unprivileged reader.
+mkdir -p "$STATE" 2>/dev/null || true
+[[ -w "$STATE" ]] && touch "$SEEN_PORTS" "$ALERTS" "$BLOCKED" 2>/dev/null || true
+
+_audit() {
+  command -v chakra-audit-log >/dev/null 2>&1 && \
+    chakra-audit-log --actor chakra-shield --action "$1" --target "$2" \
+      --risk-tier 1 --approved-by "auto (monitor)" --result "$3" || true
+}
+
+alert() {
+  # alert <action> <target> <human message>
+  local action="$1" target="$2" msg="$3" ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  logger -t chakra-shield -- "$msg" 2>/dev/null || true
+  jq -nc --arg ts "$ts" --arg action "$action" --arg target "$target" --arg msg "$msg" \
+    '{timestamp:$ts,action:$action,target:$target,message:$msg}' >> "$ALERTS" 2>/dev/null || true
+  _audit "$action" "$target" "alerted"
+}
+
+nft_available() { command -v nft >/dev/null 2>&1 && nft list table $NFT_TABLE >/dev/null 2>&1; }
+
+block_port() {
+  local proto="$1" port="$2"
+  nft_available || return 1
+  nft add rule $NFT_TABLE $NFT_CHAIN "$proto" dport "$port" drop 2>/dev/null || return 1
+  echo "port $proto/$port" >> "$BLOCKED"
+  _audit "shield.block" "$proto/$port" "blocked (nftables)"
+}
+
+block_ip() {
+  local ip="$1"
+  nft_available || return 1
+  case "$ip" in
+    *:*) nft add rule $NFT_TABLE $NFT_CHAIN ip6 saddr "$ip" drop 2>/dev/null || return 1 ;;
+    *)   nft add rule $NFT_TABLE $NFT_CHAIN ip  saddr "$ip" drop 2>/dev/null || return 1 ;;
+  esac
+  echo "ip $ip" >> "$BLOCKED"
+  _audit "shield.block" "$ip" "blocked (nftables)"
+}
+
+# --- current services listening on all interfaces, as "proto/port" -----
+exposed_listeners() {
+  ss -H -tuln 2>/dev/null | awk '
+    $5 ~ /^(0\.0\.0\.0|\[::\]|\*):/ {
+      n = split($5, a, ":"); port = a[n];
+      proto = ($1 == "udp") ? "udp" : "tcp";
+      print proto "/" port;
+    }' | sort -u
+}
+
+check_exposure() {
+  local cur line proto port
+  cur="$(exposed_listeners)"
+  while read -r line; do
+    [[ -z "$line" ]] && continue
+    grep -qxF "$line" "$SEEN_PORTS" && continue
+    echo "$line" >> "$SEEN_PORTS"
+    proto="${line%%/*}"; port="${line##*/}"
+    alert "shield.exposure" "$proto/$port" "new service listening on all interfaces: $proto/$port"
+    if [[ "$SHIELD_ACTIVE_BLOCK" == "1" ]]; then
+      block_port "$proto" "$port" && alert "shield.block" "$proto/$port" "blocked inbound $proto/$port (SHIELD_ACTIVE_BLOCK=1)"
+    fi
+  done <<< "$cur"
+}
+
+check_auth_failures() {
+  [[ -r "$AUDIT_LOG" ]] || return 0
+  local size pos
+  size="$(stat -c %s "$AUDIT_LOG" 2>/dev/null || echo 0)"
+  pos="$(cat "$POSFILE" 2>/dev/null || echo 0)"
+  # log rotated / truncated -> start over
+  [[ "$pos" -gt "$size" ]] && pos=0
+  local new
+  new="$(tail -c +$((pos + 1)) "$AUDIT_LOG" 2>/dev/null)"
+  echo -n "$size" > "$POSFILE"
+  [[ -z "$new" ]] && return 0
+
+  # count failed auths per source address in this batch
+  declare -A fails
+  local addr
+  while IFS= read -r l; do
+    [[ "$l" == *"res=failed"* ]] || continue
+    [[ "$l" == *"type=USER_AUTH"* || "$l" == *"type=USER_LOGIN"* ]] || continue
+    addr="$(sed -n 's/.* addr=\([^ ]*\).*/\1/p' <<<"$l")"
+    [[ -z "$addr" || "$addr" == "?" ]] && addr="$(sed -n 's/.* hostname=\([^ ]*\).*/\1/p' <<<"$l")"
+    [[ -z "$addr" || "$addr" == "?" ]] && continue
+    fails["$addr"]=$(( ${fails["$addr"]:-0} + 1 ))
+  done <<< "$new"
+
+  local src
+  for src in "${!fails[@]}"; do
+    if [[ "${fails[$src]}" -ge "$SHIELD_AUTH_FAIL_THRESHOLD" ]]; then
+      grep -qxF "ip $src" "$BLOCKED" && continue
+      alert "shield.authburst" "$src" "auth-failure burst from $src (${fails[$src]} failures)"
+      if [[ "$SHIELD_ACTIVE_BLOCK" == "1" ]]; then
+        block_ip "$src" && alert "shield.block" "$src" "blocked source $src (SHIELD_ACTIVE_BLOCK=1)"
+      fi
+    fi
+  done
+}
+
+one_pass() {
+  check_exposure
+  check_auth_failures
+  date -u +%Y-%m-%dT%H:%M:%SZ > "$HEARTBEAT"
+}
+
+cmd_watch() {
+  # seed the baseline silently on the very first run so we don't alert on
+  # everything that is already listening at boot
+  if [[ ! -s "$SEEN_PORTS" ]]; then
+    exposed_listeners > "$SEEN_PORTS"
+    _audit "shield.start" "localhost" "baseline: $(wc -l < "$SEEN_PORTS") listener(s)"
+  fi
+  echo -n "$(stat -c %s "$AUDIT_LOG" 2>/dev/null || echo 0)" > "$POSFILE"
+  logger -t chakra-shield "Chakra Shield watching (interval ${SHIELD_INTERVAL}s, active-block=${SHIELD_ACTIVE_BLOCK})"
+  while true; do
+    one_pass
+    sleep "$SHIELD_INTERVAL"
+  done
+}
+
+cmd_check() {
+  # a real pass reads /var/log/audit/audit.log and writes state -> root.
+  if [[ $EUID -ne 0 ]]; then
+    echo "chakra-shield check needs root (it reads the OS audit log and updates state)." >&2
+    echo "Try: sudo chakra-shield check      -- or 'chakra-shield status' for a read-only view." >&2
+    exit 1
+  fi
+  echo "Chakra Shield -- single pass"
+  echo "============================"
+  local before
+  before="$(wc -l < "$ALERTS" 2>/dev/null || echo 0)"
+  one_pass
+  local after
+  after="$(wc -l < "$ALERTS" 2>/dev/null || echo 0)"
+  if [[ "$after" -gt "$before" ]]; then
+    echo "New alerts:"
+    tail -n $((after - before)) "$ALERTS" | jq -r '"  [" + .timestamp + "] " + .message'
+  else
+    echo "  nothing new."
+  fi
+}
+
+cmd_status() {
+  echo "Chakra Shield"
+  echo "============="
+  if systemctl is-active --quiet chakra-shield 2>/dev/null; then
+    echo "Service:       active"
+  else
+    echo "Service:       NOT running   (sudo systemctl enable --now chakra-shield)"
+  fi
+  echo "Mode:          $([[ "$SHIELD_ACTIVE_BLOCK" == "1" ]] && echo "alert + BLOCK" || echo "alert only (set SHIELD_ACTIVE_BLOCK=1 in $CONF to auto-block)")"
+  echo "Interval:      ${SHIELD_INTERVAL}s"
+  local last ports
+  last="never"; [[ -r "$HEARTBEAT" ]] && last="$(cat "$HEARTBEAT" 2>/dev/null)"
+  ports=0;      [[ -r "$SEEN_PORTS" ]] && ports="$(grep -c . "$SEEN_PORTS" 2>/dev/null || echo 0)"
+  echo "Last pass:     ${last:-never}"
+  echo "Watched ports: $ports listener(s) on all interfaces"
+  echo
+  echo "Active blocks (this boot):"
+  if [[ -s "$BLOCKED" ]]; then sed 's/^/  /' "$BLOCKED" 2>/dev/null; else echo "  (none)"; fi
+  echo
+  echo "Recent alerts:"
+  if [[ -r "$ALERTS" && -s "$ALERTS" ]]; then
+    tail -n 10 "$ALERTS" 2>/dev/null | jq -r '"  [" + .timestamp + "] " + .message' 2>/dev/null
+  else
+    echo "  (none)"
+  fi
+}
+
+cmd_unblock() {
+  local what="$1"
+  [[ $EUID -eq 0 ]] || { echo "chakra-shield unblock needs root." >&2; exit 1; }
+  nft_available || { echo "nftables table $NFT_TABLE not present." >&2; exit 1; }
+  local handle
+  # find matching rule handles in the input chain
+  handle="$(nft -a list chain $NFT_TABLE $NFT_CHAIN 2>/dev/null | awk -v w="$what" '
+    $0 ~ w && /drop/ { for (i=1;i<=NF;i++) if ($i=="handle") print $(i+1) }')"
+  if [[ -z "$handle" ]]; then echo "No Shield rule matching '$what' found."; exit 1; fi
+  local h
+  for h in $handle; do nft delete rule $NFT_TABLE $NFT_CHAIN handle "$h" 2>/dev/null; done
+  grep -v -- "$what" "$BLOCKED" > "$BLOCKED.tmp" 2>/dev/null && mv "$BLOCKED.tmp" "$BLOCKED"
+  _audit "shield.unblock" "$what" "removed"
+  echo "Removed Shield rule(s) matching '$what'."
+}
+
+case "${1:-status}" in
+  watch)   cmd_watch ;;
+  check)   cmd_check ;;
+  status)  cmd_status ;;
+  unblock) shift; [[ $# -ge 1 ]] || { echo "usage: chakra-shield unblock <ip|port>" >&2; exit 1; }; cmd_unblock "$1" ;;
+  score)   exec chakra-score "${@:2}" ;;
+  *)       echo "usage: chakra-shield {watch|check|status|unblock <x>|score}" >&2; exit 1 ;;
+esac

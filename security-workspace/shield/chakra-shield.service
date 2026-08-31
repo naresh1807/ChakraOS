@@ -1,0 +1,20 @@
+[Unit]
+Description=Chakra Shield -- active-defense watcher (network exposure + auth-failure bursts)
+Documentation=file:///usr/share/doc/chakra-os/shield-README.md
+After=nftables.service auditd.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/chakra/bin/chakra-shield watch
+Restart=on-failure
+RestartSec=10
+# Runs as root: it reads /var/log/audit/audit.log and, only when
+# SHIELD_ACTIVE_BLOCK=1, calls `nft` (needs CAP_NET_ADMIN). Light
+# sandboxing that does not get in the way of either.
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
