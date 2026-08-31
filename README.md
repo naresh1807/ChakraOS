@@ -6,7 +6,7 @@ See `docs/` for phase-by-phase status and the full roadmap.
 
 ## Status
 
-**Phases 1–12 complete.** A reproducible Debian 12 (bookworm) + KDE Plasma 5.27 live ISO that:
+**Phases 1–13 complete.** A reproducible Debian 12 (bookworm) + KDE Plasma 5.27 live ISO that:
 
 - boots to a Windows 11-styled Plasma desktop with a full Sudarshana Chakra identity (boot splash, wallpaper, login screen, desktop icons, familiar app naming);
 - ships ~49 curated security/forensics apt packages plus Metasploit, Nikto and Burp Suite Community, in a Kali-style categorized "Security Tools" menu;
@@ -18,9 +18,10 @@ See `docs/` for phase-by-phase status and the full roadmap.
 - has **active defense**: `chakra-shield` — a rule-based watcher of network exposure and auth-failure bursts (alert-only by default, opt-in nftables blocking) — and `chakra-score`, a 0–100 Security Score with a per-check breakdown;
 - has a **developer tooling suite**: `chakra-portwatch` (listening ports + owners), `chakra-containers` (rootless podman), `chakra-apiwatch` (plaintext HTTP sniff on a local port), `chakra-devenv` (project/runtime/`.env` inspector), `chakra-devhub` (TUI);
 - has **system-maintenance tools**: `chakra-fixer` (diagnose + repair common breakage), `chakra-update`, `chakra-clean`, `chakra-snapshot` (config archive), and a GRUB recovery-mode entry;
-- has **performance & daily-use tools**: `chakra-perf` (power profiles / "what's slow"), `chakra-battery` (heuristic advisor), `chakra-search` (unified CLI search), `chakra-clip` (terminal clipboard).
+- has **performance & daily-use tools**: `chakra-perf` (power profiles / "what's slow"), `chakra-battery` (heuristic advisor), `chakra-search` (unified CLI search), `chakra-clip` (terminal clipboard);
+- has a **security research environment**: `chakra-lab` (isolated firejail/podman workspace for untrusted samples — drop/scan/triage) and `chakra-reporter` (structured findings-report builder).
 
-Everything past Phase 12 (`mobile/`, `office/`, `compatibility/`, …) mirrors the project's long-term architecture and is empty scaffolding until its phase begins. See `docs/roadmap.md` for the full breakdown — deliberate deferrals (a real local LLM, AppGuard, Secure Boot) are called out there and in each area's `README.md`.
+Everything past Phase 13 (`mobile/`, `office/`, `compatibility/`, …) mirrors the project's long-term architecture and is empty scaffolding until its phase begins. See `docs/roadmap.md` for the full breakdown — deliberate deferrals (a real local LLM, AppGuard, Secure Boot) are called out there and in each area's `README.md`.
 
 ## Layout
 

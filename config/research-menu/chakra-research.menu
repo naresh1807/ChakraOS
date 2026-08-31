@@ -1,0 +1,16 @@
+<!DOCTYPE Menu PUBLIC "-//freedesktop//DTD Menu 1.0//EN"
+ "http://www.freedesktop.org/standards/menu-spec/menu-1.0.dtd">
+<!--
+  Chakra OS "Security Research" menu (Phase 13). Merged via the standard
+  XDG DefaultMergeDirs mechanism -- see config/security-menu/ etc.
+-->
+<Menu>
+  <Name>Applications</Name>
+  <Menu>
+    <Name>ChakraResearch</Name>
+    <Directory>chakra-research.directory</Directory>
+    <Include>
+      <Category>X-Chakra-Research</Category>
+    </Include>
+  </Menu>
+</Menu>

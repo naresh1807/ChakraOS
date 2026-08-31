@@ -77,6 +77,12 @@ plocate
 xclip
 wl-clipboard
 
+# Phase 13: security research. xxd for chakra-lab's hex triage (the RE
+# tools -- yara/ssdeep/binwalk/clamav/... -- came in with Phase 2;
+# firejail/podman with Phases 8/10). pandoc is optional (chakra-reporter
+# renders Markdown natively; HTML needs it) and deliberately not bundled.
+xxd
+
 # Audio foundation
 pipewire
 pipewire-pulse

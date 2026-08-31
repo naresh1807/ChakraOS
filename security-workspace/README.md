@@ -1,4 +1,20 @@
-# Phase 9 — Active defense: Chakra Shield
+# security-workspace/
+
+Two phases live here.
+
+## Phase 13 — Security research environment
+
+- **`lab/`** — `chakra-lab`: an isolated (firejail `--net=none --private`,
+  or podman) workspace to triage untrusted samples. `new` / `drop`
+  (hashed, `0400`) / `scan` / `enter` / `reset` / `destroy`, all
+  audit-logged. See `lab/README.md`.
+- **`reporter/`** — `chakra-reporter`: a structured findings-report
+  builder (`finding` / `ioc` / `evidence` / `timeline` / `from-lab` /
+  `system` → Markdown, +HTML with pandoc). See `reporter/README.md`.
+- New **Security Research** menu section; package `xxd`. Built by
+  `apply_research()`.
+
+## Phase 9 — Active defense: Chakra Shield
 
 Phases 6 and 8 gave Chakra read-only observability and per-device
 enforcement. Phase 9 is the layer that *watches* and *acts*: a rule-based

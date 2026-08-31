@@ -1,0 +1,4 @@
+# Chakra Security Research menu (Phase 13).
+# Name|category_id|exec command|needs_root(0/1)
+Chakra Lab|Research|chakra-lab list|0
+Chakra Reporter|Research|chakra-reporter list|0

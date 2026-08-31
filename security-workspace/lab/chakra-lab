@@ -1,0 +1,189 @@
+#!/bin/bash
+# chakra-lab -- an isolated place to look at things you don't trust.
+#
+# Built on the primitives Chakra already has: firejail (Phase 8) for the
+# default lab -- a private filesystem rooted at the lab directory, NO
+# network -- and podman (Phase 10) for a harder, kernel-namespaced lab
+# with snapshot/rollback via `podman commit`.
+#
+# Samples you drop in are hashed, recorded in a MANIFEST, and chmod 0400
+# so nothing runs them by accident. Every lab action goes to the Chakra
+# Audit trail.
+#
+# Usage:
+#   chakra-lab new <name> [--container]
+#   chakra-lab enter <name> [--online]      (--online = give the lab the network -- careful)
+#   chakra-lab drop <file> [name]           copy a sample in (hashed, 0400)
+#   chakra-lab scan <name>                  quick triage of every sample
+#   chakra-lab list
+#   chakra-lab reset <name> [--hard]        wipe work (keep samples) / everything
+#   chakra-lab destroy <name>
+set -u
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+LABS="${CHAKRA_LABS_DIR:-$HOME/chakra-labs}"
+YARA_DIR="${CHAKRA_YARA_DIR:-$HOME/chakra-labs/.yara}"
+mkdir -p "$LABS" 2>/dev/null
+
+_audit() {
+  command -v chakra-audit-log >/dev/null 2>&1 && \
+    chakra-audit-log --actor chakra-lab --action "$1" --target "$2" \
+      --risk-tier 2 --approved-by "user (direct invocation)" --result "$3" || true
+}
+_labdir() { echo "$LABS/$1"; }
+_exists() { [[ -d "$LABS/$1" && -f "$LABS/$1/.labconfig" ]]; }
+
+cmd="${1:-list}"; shift || true
+
+case "$cmd" in
+  new)
+    name="${1:?lab name required}"; container=0
+    [[ "${2:-}" == "--container" ]] && container=1
+    d="$(_labdir "$name")"
+    [[ -e "$d" ]] && { echo "lab '$name' already exists." >&2; exit 1; }
+    mkdir -p "$d/samples" "$d/work" "$d/output"
+    : > "$d/samples/MANIFEST"
+    cat > "$d/notes.md" <<EOF
+# Lab: $name
+Created: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+## Observations
+
+EOF
+    printf 'KIND=%s\nCREATED=%s\n' "$([[ $container -eq 1 ]] && echo container || echo firejail)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$d/.labconfig"
+    if [[ $container -eq 1 ]]; then
+      command -v podman >/dev/null 2>&1 || { echo "podman not installed -- drop --container or 'apt install podman'." >&2; exit 1; }
+      if ! podman image exists localhost/chakra-lab 2>/dev/null; then
+        echo "Building the chakra-lab base image (one-time, needs network)..."
+        podman build -t localhost/chakra-lab - <<'DOCKER' || { echo "image build failed -- the firejail lab still works." >&2; }
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    file binutils xxd ssdeep yara clamav bsdextrautils python3 && \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /lab
+DOCKER
+      fi
+    fi
+    _audit "lab.new" "$name" "created ($([[ $container -eq 1 ]] && echo container || echo firejail))"
+    echo "Lab '$name' ready at $d"
+    echo "  chakra-lab drop <file> $name    then    chakra-lab enter $name"
+    ;;
+
+  enter)
+    name="${1:?lab name required}"; online=0
+    [[ "${2:-}" == "--online" ]] && online=1
+    _exists "$name" || { echo "no such lab: $name (chakra-lab new $name)" >&2; exit 1; }
+    d="$(_labdir "$name")"; . "$d/.labconfig"
+    if [[ $online -eq 1 ]]; then
+      echo "!! --online: this lab now has NETWORK ACCESS. A live sample can call home,"
+      echo "!! exfiltrate, or pull a second stage. Only do this deliberately."
+      read -r -p "Continue online? [y/N] " a; [[ "$a" =~ ^[Yy]$ ]] || exit 0
+    fi
+    _audit "lab.enter" "$name" "$([[ $online -eq 1 ]] && echo online || echo offline)"
+    if [[ "${KIND:-firejail}" == container ]]; then
+      podman run -it --rm --hostname "lab-$name" \
+        $([[ $online -eq 0 ]] && echo "--network none") \
+        -v "$d:/lab:Z" localhost/chakra-lab bash
+    else
+      echo "[chakra-lab] firejail: private fs = $d, network = $([[ $online -eq 1 ]] && echo host || echo NONE). 'exit' to leave."
+      firejail --quiet --noprofile --private="$d" \
+        $([[ $online -eq 0 ]] && echo "--net=none") \
+        --caps.drop=all --nonewprivs -- bash
+    fi
+    ;;
+
+  drop)
+    f="${1:?file required}"; name="${2:-}"
+    [[ -f "$f" ]] || { echo "no such file: $f" >&2; exit 1; }
+    if [[ -z "$name" ]]; then
+      name="$(ls -1t "$LABS" 2>/dev/null | head -1)"
+      [[ -n "$name" ]] && _exists "$name" || { echo "no lab given and none found -- chakra-lab new <name>" >&2; exit 1; }
+      echo "(dropping into most-recent lab: $name)"
+    fi
+    _exists "$name" || { echo "no such lab: $name" >&2; exit 1; }
+    d="$(_labdir "$name")"; base="$(basename "$f")"
+    dest="$d/samples/$base"
+    cp "$f" "$dest"; chmod 0400 "$dest"
+    s256=$(sha256sum "$dest" | cut -d" " -f1)
+    printf '%s  %s  %s  %s  %s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$base" "$s256" \
+      "$(sha1sum "$dest"|cut -d" " -f1)" "$(md5sum "$dest"|cut -d" " -f1)" >> "$d/samples/MANIFEST"
+    echo "  $base"
+    echo "  sha256 $s256"
+    echo "  $(file -b "$dest")   ($(stat -c %s "$dest") bytes)   -> 0400 in samples/"
+    _audit "lab.drop" "$name/$base" "sha256=$s256"
+    ;;
+
+  scan)
+    name="${1:?lab name required}"
+    _exists "$name" || { echo "no such lab: $name" >&2; exit 1; }
+    d="$(_labdir "$name")"; out="$d/triage-$(date +%Y%m%d-%H%M%S).txt"
+    shopt -s nullglob
+    samples=()
+    for s in "$d/samples/"*; do [[ "$(basename "$s")" == MANIFEST ]] && continue; samples+=("$s"); done
+    [[ ${#samples[@]} -eq 0 ]] && { echo "no samples -- chakra-lab drop <file> $name"; exit 0; }
+    {
+      echo "chakra-lab triage -- $name -- $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      for s in "${samples[@]}"; do
+        b="$(basename "$s")"
+        echo; echo "=================== $b ==================="
+        echo "size:    $(stat -c %s "$s") bytes"
+        echo "sha256:  $(sha256sum "$s" | cut -d" " -f1)"
+        echo "type:    $(file -b "$s")"
+        command -v ssdeep >/dev/null && echo "ssdeep:  $(ssdeep -s "$s" 2>/dev/null | tail -1 | sed 's/,".*//')"
+        if command -v clamscan >/dev/null; then
+          cv="$(clamscan --no-summary "$s" 2>&1 | sed "s|.*$b: ||" | head -1)"
+          echo "clamav:  ${cv:-(clamscan produced no output -- signature DB missing? run: sudo freshclam)}"
+        fi
+        if command -v yara >/dev/null && compgen -G "$YARA_DIR/*.yar" >/dev/null 2>&1; then
+          echo "yara:    $(yara -r "$YARA_DIR"/*.yar "$s" 2>/dev/null | awk "{print \$1}" | paste -sd, - || echo "no match")"
+        else
+          echo "yara:    (skipped -- drop .yar rules in $YARA_DIR)"
+        fi
+        command -v exiftool >/dev/null && echo "exif:    $(exiftool -s -s -s -MIMEType -FileType "$s" 2>/dev/null | paste -sd/ -)"
+        echo "strings (first 15 printable >=6):"
+        strings -n 6 "$s" 2>/dev/null | head -15 | sed 's/^/  /'
+      done
+    } | tee "$out"
+    echo; echo "-> $out"
+    _audit "lab.scan" "$name" "${#samples[@]} sample(s)"
+    ;;
+
+  list)
+    echo "Chakra Labs  ($LABS)"
+    echo "==========="
+    shopt -s nullglob
+    any=0
+    for d in "$LABS"/*/; do
+      [[ -f "$d/.labconfig" ]] || continue
+      any=1; n="$(basename "$d")"; . "$d/.labconfig"
+      sc=$(( $(wc -l < "$d/samples/MANIFEST" 2>/dev/null || echo 0) ))
+      printf "  %-20s %-10s %s sample(s)   %s\n" "$n" "${KIND:-firejail}" "$sc" "${CREATED:-}"
+    done
+    [[ $any -eq 0 ]] && echo "  (none -- chakra-lab new <name>)"
+    ;;
+
+  reset)
+    name="${1:?lab name required}"; hard=0; [[ "${2:-}" == "--hard" ]] && hard=1
+    _exists "$name" || { echo "no such lab: $name" >&2; exit 1; }
+    d="$(_labdir "$name")"
+    read -r -p "$([[ $hard -eq 1 ]] && echo "WIPE EVERYTHING including samples" || echo "wipe work/ and output/ (keep samples)") in '$name'? [y/N] " a
+    [[ "$a" =~ ^[Yy]$ ]] || exit 0
+    rm -rf "$d/work" "$d/output"; mkdir -p "$d/work" "$d/output"
+    [[ $hard -eq 1 ]] && { rm -rf "$d/samples"; mkdir -p "$d/samples"; : > "$d/samples/MANIFEST"; }
+    _audit "lab.reset" "$name" "$([[ $hard -eq 1 ]] && echo hard || echo soft)"
+    echo "reset."
+    ;;
+
+  destroy)
+    name="${1:?lab name required}"
+    _exists "$name" || { echo "no such lab: $name" >&2; exit 1; }
+    read -r -p "Permanently delete lab '$name' and all its contents? [y/N] " a
+    [[ "$a" =~ ^[Yy]$ ]] || exit 0
+    rm -rf "$(_labdir "$name")"
+    _audit "lab.destroy" "$name" "deleted"
+    echo "gone."
+    ;;
+
+  *) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

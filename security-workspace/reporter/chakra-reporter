@@ -1,0 +1,168 @@
+#!/bin/bash
+# chakra-reporter -- turn an analysis session into a report.
+#
+# Keeps a structured store (.report.json) plus an evidence directory,
+# and renders it to Markdown (and HTML, if pandoc is installed) from a
+# pentest / incident-response template: Summary, Scope, Methodology,
+# Findings by severity, IOCs, Timeline, Appendix.
+#
+# Usage:
+#   chakra-reporter new "<title>"
+#   chakra-reporter finding <slug> --severity {critical|high|medium|low|info} --title "..." [--desc "..."]
+#   chakra-reporter ioc <slug> <hash|ip|domain|url|filename|registry> <value> [note]
+#   chakra-reporter evidence <slug> <file> ["caption"]
+#   chakra-reporter note <slug> "<timeline entry>"
+#   chakra-reporter from-lab <slug> <lab-name>      import a lab's sample hashes
+#   chakra-reporter system <slug>                   snapshot chakra-health/netguard/processlens
+#   chakra-reporter build <slug>
+#   chakra-reporter list
+set -u
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+ROOT="${CHAKRA_REPORTS_DIR:-$HOME/chakra-reports}"
+LABS="${CHAKRA_LABS_DIR:-$HOME/chakra-labs}"
+mkdir -p "$ROOT" 2>/dev/null
+
+_slugify() { echo "$1" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9-' | tr -s '-' | sed 's/^-//;s/-$//'; }
+_dir()  { echo "$ROOT/$1"; }
+_json() { echo "$ROOT/$1/.report.json"; }
+_have() { [[ -f "$(_json "$1")" ]]; }
+_jset() { local s="$1"; shift; local tmp; tmp="$(mktemp)"; jq "$@" "$(_json "$s")" > "$tmp" && mv "$tmp" "$(_json "$s")"; }
+
+cmd="${1:-list}"; shift || true
+
+case "$cmd" in
+  new)
+    title="${1:?title required}"; slug="$(_slugify "$title")"
+    d="$(_dir "$slug")"
+    [[ -e "$d" ]] && { echo "report '$slug' already exists." >&2; exit 1; }
+    mkdir -p "$d/evidence"
+    jq -n --arg title "$title" --arg slug "$slug" --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+       --arg analyst "$(id -un)" --arg host "$(hostname)" \
+       '{title:$title,slug:$slug,created:$created,analyst:$analyst,host:$host,
+         summary:"",scope:"",methodology:"",findings:[],iocs:[],timeline:[],appendix:[]}' > "$(_json "$slug")"
+    echo "Report '$slug' at $d"
+    echo "  edit summary/scope: chakra-reporter build $slug  then open report.md"
+    echo "  add: chakra-reporter finding $slug --severity high --title \"...\""
+    ;;
+
+  finding)
+    slug="${1:?slug}"; shift; _have "$slug" || { echo "no such report: $slug" >&2; exit 1; }
+    sev="" ftitle="" desc=""
+    while [[ $# -gt 0 ]]; do case "$1" in
+      --severity) sev="$2"; shift 2;; --title) ftitle="$2"; shift 2;; --desc) desc="$2"; shift 2;;
+      *) shift;; esac; done
+    [[ "$sev" =~ ^(critical|high|medium|low|info)$ ]] || { echo "--severity must be critical|high|medium|low|info" >&2; exit 1; }
+    [[ -n "$ftitle" ]] || { echo "--title required" >&2; exit 1; }
+    [[ -z "$desc" && ! -t 0 ]] && desc="$(cat)"
+    _jset "$slug" --arg s "$sev" --arg t "$ftitle" --arg d "$desc" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      '.findings += [{severity:$s,title:$t,description:$d,added:$ts}]'
+    echo "finding added ($sev): $ftitle"
+    ;;
+
+  ioc)
+    slug="${1:?slug}"; typ="${2:?type}"; val="${3:?value}"; note="${4:-}"
+    _have "$slug" || { echo "no such report: $slug" >&2; exit 1; }
+    _jset "$slug" --arg t "$typ" --arg v "$val" --arg n "$note" '.iocs += [{type:$t,value:$v,note:$n}]'
+    echo "ioc added: $typ $val"
+    ;;
+
+  evidence)
+    slug="${1:?slug}"; f="${2:?file}"; cap="${3:-}"
+    _have "$slug" || { echo "no such report: $slug" >&2; exit 1; }
+    [[ -f "$f" ]] || { echo "no such file: $f" >&2; exit 1; }
+    b="$(basename "$f")"; cp "$f" "$(_dir "$slug")/evidence/$b"
+    h="$(sha256sum "$(_dir "$slug")/evidence/$b" | cut -d" " -f1)"
+    _jset "$slug" --arg b "$b" --arg c "$cap" --arg h "$h" '.appendix += [{kind:"evidence",file:$b,caption:$c,sha256:$h}]'
+    echo "evidence: $b  sha256 $h"
+    ;;
+
+  note)
+    slug="${1:?slug}"; txt="${2:?text}"
+    _have "$slug" || { echo "no such report: $slug" >&2; exit 1; }
+    _jset "$slug" --arg t "$txt" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.timeline += [{time:$ts,entry:$t}]'
+    echo "noted."
+    ;;
+
+  from-lab)
+    slug="${1:?slug}"; lab="${2:?lab name}"
+    _have "$slug" || { echo "no such report: $slug" >&2; exit 1; }
+    m="$LABS/$lab/samples/MANIFEST"
+    [[ -f "$m" ]] || { echo "no manifest for lab '$lab'" >&2; exit 1; }
+    n=0
+    while read -r ts name s256 s1 md5; do
+      [[ -z "$s256" ]] && continue
+      _jset "$slug" --arg v "$s256" --arg n "sample: $name (from lab $lab)" '.iocs += [{type:"hash",value:$v,note:$n}]'
+      n=$((n+1))
+    done < "$m"
+    _jset "$slug" --arg t "$lab" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.timeline += [{time:$ts,entry:("imported \($t) lab sample hashes")}]'
+    echo "imported $n sample hash(es) from lab '$lab' as IOCs."
+    ;;
+
+  system)
+    slug="${1:?slug}"; _have "$slug" || { echo "no such report: $slug" >&2; exit 1; }
+    snap="{}"
+    for t in chakra-health chakra-netguard chakra-processlens; do
+      command -v "$t" >/dev/null 2>&1 || continue
+      out="$("$t" --json 2>/dev/null)"; [[ -z "$out" ]] && continue
+      snap="$(jq -c --arg k "$t" --argjson v "$out" '. + {($k):$v}' <<<"$snap")"
+    done
+    _jset "$slug" --argjson s "$snap" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      '.appendix += [{kind:"system-snapshot",time:$ts,data:$s}]'
+    echo "system snapshot added to the appendix."
+    ;;
+
+  build)
+    slug="${1:?slug}"; _have "$slug" || { echo "no such report: $slug" >&2; exit 1; }
+    j="$(_json "$slug")"; md="$(_dir "$slug")/report.md"
+    {
+      jq -r '"# " + .title + "\n\n**Analyst:** " + .analyst + " · **Host:** " + .host + " · **Created:** " + .created + "\n"' "$j"
+      echo "## Summary"; echo; jq -r '.summary // "_(fill in)_"' "$j"; echo
+      echo "## Scope"; echo; jq -r '.scope // "_(fill in)_"' "$j"; echo
+      echo "## Methodology"; echo; jq -r '.methodology // "_(fill in)_"' "$j"; echo
+      echo "## Findings"; echo
+      for sev in critical high medium low info; do
+        cnt="$(jq --arg s "$sev" '[.findings[]|select(.severity==$s)]|length' "$j")"
+        [[ "$cnt" -eq 0 ]] && continue
+        echo "### ${sev^} ($cnt)"; echo
+        jq -r --arg s "$sev" '.findings[]|select(.severity==$s)|"- **" + .title + "**  \n  " + (.description|gsub("\n";"\n  ")) + "\n"' "$j"
+      done
+      [[ "$(jq '.findings|length' "$j")" -eq 0 ]] && echo "_No findings recorded._" && echo
+      echo "## Indicators of Compromise"; echo
+      if [[ "$(jq '.iocs|length' "$j")" -gt 0 ]]; then
+        echo "| Type | Value | Note |"; echo "|---|---|---|"
+        jq -r '.iocs[]|"| \(.type) | `\(.value)` | \(.note) |"' "$j"
+      else echo "_None recorded._"; fi
+      echo
+      echo "## Timeline"; echo
+      if [[ "$(jq '.timeline|length' "$j")" -gt 0 ]]; then
+        jq -r '.timeline[]|"- " + .time + " — " + .entry' "$j"
+      else echo "_Empty._"; fi
+      echo
+      echo "## Appendix"; echo
+      jq -r '.appendix[]? | if .kind=="evidence" then "- Evidence: `" + .file + "` (sha256 `" + .sha256 + "`)" + (if .caption!="" then " — " + .caption else "" end) elif .kind=="system-snapshot" then "- System snapshot at " + .time + " (health/netguard/processlens JSON below)" else "- " + (.kind // "item") end' "$j"
+      snaps="$(jq -c '[.appendix[]?|select(.kind=="system-snapshot")]' "$j")"
+      if [[ "$snaps" != "[]" ]]; then echo; echo '```json'; jq '[.appendix[]?|select(.kind=="system-snapshot")|.data]' "$j"; echo '```'; fi
+    } > "$md"
+    echo "-> $md"
+    if command -v pandoc >/dev/null 2>&1; then
+      pandoc -s --metadata title="$(jq -r .title "$j")" -o "$(_dir "$slug")/report.html" "$md" 2>/dev/null \
+        && echo "-> $(_dir "$slug")/report.html"
+    else
+      echo "(install pandoc for an HTML/PDF render: apt install pandoc)"
+    fi
+    ;;
+
+  list)
+    echo "Chakra Reports  ($ROOT)"
+    echo "=============="
+    shopt -s nullglob; any=0
+    for j in "$ROOT"/*/.report.json; do
+      any=1
+      jq -r '"  " + .slug + "   " + (.findings|length|tostring) + " finding(s), " + (.iocs|length|tostring) + " IOC(s)   " + .created' "$j"
+    done
+    [[ $any -eq 0 ]] && echo "  (none -- chakra-reporter new \"<title>\")"
+    ;;
+
+  *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

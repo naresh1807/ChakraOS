@@ -25,13 +25,14 @@ Phases are ordered by dependency, not just topic — each phase only depends on 
 
 - **Phase 12 — Performance & daily-use polish.** `chakra-perf` (Performance Engine — power profile / CPU governor / swappiness state + one-call `performance`/`balanced`/`powersave` via `power-profiles-daemon`; `slow` = "what's slowing me down"), `chakra-battery` (the manual's "Battery AI", *honestly a heuristic advisor over `upower` telemetry, not ML* — status/health + `advise` + `save`), `chakra-search` (one CLI query across files/packages/processes/units/`$PATH` — the terminal complement to KRunner + Baloo), `chakra-clip` (the clipboard from the shell — get/set/history-via-Klipper/clear, X11 + Wayland). Plasma already ships the GUI layer (powerdevil, Klipper, KRunner/Baloo); this is the engine/CLI on top. Deferred: ML for battery/perf, a custom search/clipboard UI, undervolting/thermal/GPU tuning, persistent tuning (needs the installer). → `performance/`
 
+- **Phase 13 — Security research environment.** `chakra-lab` — an isolated place to look at things you don't trust: firejail (`--net=none --private=<labdir> --caps.drop=all`) by default, podman `--container` for harder isolation; `new` / `drop` (samples hashed + `0400` into a MANIFEST) / `scan` (file/sha/clamav/yara/ssdeep/exif/strings triage) / `enter` (offline; `--online` asks first, loudly) / `reset` / `destroy`, all audit-logged. `chakra-reporter` — a structured findings-report builder (Summary/Scope/Findings-by-severity/IOCs/Timeline/Appendix) with `finding` / `ioc` / `evidence` (hashed) / `from-lab` (imports sample hashes) / `system` (Phase 6 `--json` snapshot) → Markdown, +HTML with pandoc. New **Security Research** menu. Deferred: a fake-internet sinkhole (inetsim) for dynamic analysis, an automated detonation sandbox (Cuckoo/CAPE-style), VM/microVM isolation, bundled pandoc. → `security-workspace/`
+
 ## In progress
 
-*(nothing active — Phase 13 is next)*
+*(nothing active — Phase 14 is next)*
 
 ## Planned
 
-- **Phase 13 — Security research environment.** Chakra Lab, Chakra Reporter — built on Phase 8's Sandbox and Phase 10's containers. → `security-workspace/`, `isolation/`
 - **Phase 14 — Identity & advanced boot hardening.** Passkeys, FIDO2, biometrics; matured boot chain.
 - **Phase 15 — Mobile ecosystem.** Link (pairing) → Sync → Share → Find, in that order. → `mobile/`
 - **Phase 16 — Custom Chakra Shell.** Replacing stock KDE's launcher/dock/panel/notification center with fully custom Chakra components, plus light/auto/high-contrast theme modes — the most disruptive UI rewrite, deliberately last. → `desktop/launcher/`, `desktop/workspace-manager/`

@@ -1089,6 +1089,45 @@ fi
 EOF
 }
 
+apply_research() {
+  log "Installing Chakra Security Research (Phase 13: Lab + Reporter)..."
+  local menu_cfg="$PROJECT_ROOT/config/research-menu"
+  local ws="$PROJECT_ROOT/security-workspace"
+  local apps_dir="$ROOTFS/usr/share/applications"
+  local dirs_dir="$ROOTFS/usr/share/desktop-directories"
+  local merged_dir="$ROOTFS/etc/xdg/menus/applications-merged"
+  local bin_dir="$ROOTFS/usr/lib/chakra/bin"
+  mkdir -p "$apps_dir" "$dirs_dir" "$merged_dir" "$bin_dir"
+
+  local f name
+  for f in "$ws/lab/chakra-lab" "$ws/reporter/chakra-reporter"; do
+    name="$(basename "$f")"
+    cp "$f" "$bin_dir/$name"
+    chmod +x "$bin_dir/$name"
+    ln -sf "/usr/lib/chakra/bin/$name" "$ROOTFS/usr/local/bin/$name"
+  done
+
+  cp "$menu_cfg/chakra-research.directory" "$dirs_dir/"
+  cp "$menu_cfg/chakra-research.menu" "$merged_dir/"
+
+  local tname cat exec_cmd needs_root safe_id run_cmd
+  while IFS='|' read -r tname cat exec_cmd needs_root; do
+    [[ -z "$tname" || "$tname" == \#* ]] && continue
+    safe_id="$(echo "$tname" | tr -c 'a-zA-Z0-9' '-' | tr -s '-')"
+    run_cmd="$exec_cmd"
+    [[ "$needs_root" == "1" ]] && run_cmd="sudo $exec_cmd"
+    cat > "$apps_dir/chakra-tool-research-$safe_id.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=$tname
+Icon=applications-science
+Exec=konsole -e bash -c "$run_cmd; echo; echo '--- press Enter to close ---'; read"
+Terminal=false
+Categories=X-Chakra-$cat;
+EOF
+  done < "$menu_cfg/tools.list"
+}
+
 build_squashfs() {
   log "Building squashfs from rootfs..."
   mkdir -p "$ISO_STAGE/live" "$ISO_STAGE/boot/grub"
@@ -1155,6 +1194,7 @@ main() {
   apply_dev_tools
   apply_performance
   apply_maintenance
+  apply_research
   cleanup_mounts
   build_squashfs
   stage_kernel_and_grub

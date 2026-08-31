@@ -4,6 +4,17 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Dates ar
 
 ## [Unreleased]
 
+## 2026-08-31 — Phase 13: security research environment
+
+### Added
+- `chakra-lab` — isolated workspace for untrusted samples. `new [--container]`, `enter [--online]` (firejail `--net=none --private` / podman `--network none`), `drop` (sample hashed sha256/1/md5 into a MANIFEST, `chmod 0400`), `scan` (file/hash/clamav/yara/ssdeep/exiftool/strings triage), `list`, `reset [--hard]`, `destroy`. Offline by default; `--online` prompts loudly. Every action → Chakra Audit trail (`actor=chakra-lab`, risk tier 2).
+- `chakra-reporter` — structured findings-report builder from a pentest/IR template. `new`, `finding --severity`, `ioc <type> <value>`, `evidence <file>` (copied + hashed), `note` (timeline), `from-lab <lab>` (imports sample hashes as IOCs), `system` (Phase 6 tools' `--json` into the appendix), `build` (→ `report.md`, +`report.html` if pandoc), `list`.
+- New **Security Research** menu section (`config/research-menu/`); `apply_research()` in `build_iso.sh`. Package: `xxd`.
+
+### Design / deferred
+- Built on Phase 8 (firejail sandbox) and Phase 10 (podman) — no new isolation mechanism.
+- Deferred: a fake-internet sinkhole (inetsim) for dynamic malware analysis, an automated detonation sandbox (Cuckoo/CAPE-style), VM/microVM isolation, bundled pandoc (Markdown renders natively; HTML is an opt-in `apt install pandoc`).
+
 ## 2026-08-31 — Phase 12: performance & daily-use polish
 
 ### Added
