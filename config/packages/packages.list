@@ -50,6 +50,7 @@ jq
 
 # Phase 8: permission & privacy enforcement.
 usbguard
+usbguard-notifier
 cryptsetup
 firejail
 

@@ -369,10 +369,12 @@ apply_boot_and_login_branding() {
   local wp_dir="$ROOTFS/usr/share/wallpapers/ChakraOS/contents/images"
   mkdir -p "$wp_dir"
   cp "$assets/wallpaper/wallpaper-1920x1080.png" "$wp_dir/1920x1080.png"
+  cp "$assets/wallpaper/wallpaper-3840x2160.png" "$wp_dir/3840x2160.png"
   cat > "$ROOTFS/usr/share/wallpapers/ChakraOS/metadata.desktop" <<EOF
 [Desktop Entry]
 Name=Chakra OS
 X-KDE-PluginInfo-Name=ChakraOS
+X-KDE-PluginInfo-Author=Chakra OS
 EOF
 
   # --- SDDM login background (Breeze theme's supported override file) ---
@@ -447,10 +449,28 @@ apply_windows11_theme() {
     echo ""
     echo "[KDE]"
     echo "widgetStyle=kvantum"
+    # Make the Fluent look-and-feel the active one. Without this Plasma
+    # falls back to Debian's default LnF (org.debian.desktop) on first
+    # boot -- which is why early builds showed the Debian wallpaper and a
+    # plain panel despite all the Fluent theming below. Plasma still
+    # regenerates its own panel layout; it just uses Fluent's template.
+    [[ -n "$lnf_id" ]] && echo "LookAndFeelPackage=$lnf_id"
     echo ""
     echo "[General]"
     [[ -n "$color_scheme" ]] && echo "ColorScheme=$color_scheme"
   } > "$chakra_home/.config/kdeglobals"
+
+  # Plasma desktop theme (the panel/plasmoid visual style) -- a separate
+  # setting from the widget style and the look-and-feel. Fluent-kde ships
+  # one; match it by name if present.
+  local plasma_theme
+  plasma_theme="$(chroot "$ROOTFS" bash -c "ls /usr/share/plasma/desktoptheme 2>/dev/null | grep -i fluent | head -1")"
+  if [[ -n "$plasma_theme" ]]; then
+    {
+      echo "[Theme]"
+      echo "name=$plasma_theme"
+    } > "$chakra_home/.config/plasmarc"
+  fi
 
   if [[ -n "$aurorae_theme" ]]; then
     {
@@ -479,49 +499,83 @@ apply_windows11_theme() {
   # of reusing the old centered one.
   rm -f "$chakra_home/.config/plasma-org.kde.plasma.desktop-appletsrc"
 
+  # Belt-and-braces for the wallpaper: a first-login autostart that calls
+  # the supported plasma-apply-wallpaperimage against a live session, then
+  # deletes itself. Covers any case the build-time layout.js/defaults
+  # edits below don't (theme updates, a stale appletsrc, etc.). Lives in
+  # the user's own autostart dir so it can rm itself.
+  mkdir -p "$chakra_home/.config/autostart"
+  cat > "$chakra_home/.config/autostart/chakra-wallpaper.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Chakra wallpaper (first login)
+Exec=sh -c 'plasma-apply-wallpaperimage /usr/share/wallpapers/ChakraOS/contents/images/1920x1080.png; rm -f "$HOME/.config/autostart/chakra-wallpaper.desktop"'
+Terminal=false
+OnlyShowIn=KDE;
+X-KDE-autostart-phase=2
+NoDisplay=true
+EOF
+
   chroot "$ROOTFS" chown -R "$CHAKRA_USERNAME:$CHAKRA_USERNAME" "/home/$CHAKRA_USERNAME/.config"
 
   chroot "$ROOTFS" rm -rf /tmp/theme-build
 
-  # Point the active look-and-feel's own "defaults" file at the Chakra OS
-  # wallpaper, rather than hand-writing the containment/panel layout
-  # ourselves — this is the officially-supported hook Plasma reads when it
-  # self-generates a fresh desktop config, so it doesn't fight with the
-  # "let Plasma regenerate its own stock panel layout" decision above.
   local wallpaper_file="/usr/share/wallpapers/ChakraOS/contents/images/1920x1080.png"
-  if [[ -n "$lnf_id" && -f "$ROOTFS/usr/share/plasma/look-and-feel/$lnf_id/contents/defaults" && -f "$ROOTFS$wallpaper_file" ]]; then
-    local defaults_file="$ROOTFS/usr/share/plasma/look-and-feel/$lnf_id/contents/defaults"
-    # Strip any override block from a previous run of this same build (this
-    # rootfs persists across rebuilds), then append a fresh one.
-    sed -i '/# --- Chakra OS wallpaper override ---/,/# --- end Chakra OS wallpaper override ---/d' "$defaults_file"
+
+  # When Plasma regenerates the desktop from the active look-and-feel it
+  # runs that LnF's layouts/org.kde.plasma.desktop-layout.js, which for
+  # Fluent-kde HARDCODES the wallpaper as
+  #   file:///home/vince/.local/share/wallpapers/Fluent/.../1920x1080.jpg
+  # -- the theme author's own home dir, which doesn't exist here, so the
+  # desktop comes up black (confirmed by boot-testing). The layout.js
+  # wins over the `defaults` file below. Rewrite that path to the Chakra
+  # wallpaper. Do it for whatever LnF is active.
+  if [[ -n "$lnf_id" ]]; then
+    local layout_js="$ROOTFS/usr/share/plasma/look-and-feel/$lnf_id/contents/layouts/org.kde.plasma.desktop-layout.js"
+    if [[ -f "$layout_js" ]]; then
+      sed -i \
+        -e "s#file://[^\"']*/wallpapers/[A-Za-z0-9._-]*/contents/images/[^\"']*#file://$wallpaper_file#g" \
+        -e "s#/home/[a-z][a-z0-9_-]*/\.local/share/wallpapers#/usr/share/wallpapers#g" \
+        "$layout_js"
+      log "Rewrote hardcoded wallpaper path in $lnf_id layout.js -> $wallpaper_file"
+    fi
+  fi
+
+  # Also point each candidate look-and-feel's "defaults" file at the
+  # Chakra wallpaper (the officially-supported self-generation hook; a
+  # fallback for LnFs without a layout.js Image, and for the Debian/Breeze
+  # LnFs in case Fluent somehow isn't the one Plasma picks).
+  local lnf df
+  for lnf in "$lnf_id" org.debian.desktop org.kde.breeze.desktop org.kde.breezedark.desktop; do
+    [[ -n "$lnf" ]] || continue
+    df="$ROOTFS/usr/share/plasma/look-and-feel/$lnf/contents/defaults"
+    [[ -f "$df" && -f "$ROOTFS$wallpaper_file" ]] || continue
+    sed -i '/# --- Chakra OS wallpaper override ---/,/# --- end Chakra OS wallpaper override ---/d' "$df"
     {
       echo ""
       echo "# --- Chakra OS wallpaper override ---"
       echo "[Wallpaper][org.kde.image][General]"
       echo "Image=$wallpaper_file"
       echo "# --- end Chakra OS wallpaper override ---"
-    } >> "$defaults_file"
-    log "Default wallpaper set via $lnf_id look-and-feel defaults."
-  else
-    log "WARNING: could not locate look-and-feel defaults file — desktop wallpaper will stay at the theme's own default."
-  fi
+    } >> "$df"
+    log "Wallpaper override written into $lnf look-and-feel defaults."
+  done
 
-  # The defaults-file hook above turned out NOT to be sufficient on its
-  # own (confirmed by boot-testing: the desktop still showed
-  # Fluent-kde's own bundled wallpaper package, not ours). Fluent-kde
-  # ships its own wallpaper package name-matched to the look-and-feel
-  # (e.g. /usr/share/wallpapers/Fluent-round-dark/contents/images/3840x2160.png)
-  # which takes precedence over the generic defaults hook. Fix: overwrite
-  # that package's actual image file with ours directly, so whatever
-  # mechanism is already correctly finding and displaying it shows our
-  # design instead -- sidesteps needing to know the exact selection logic.
+  # The defaults-file hook is not sufficient on its own: several LnFs ship
+  # a wallpaper *package* name-matched to themselves (Fluent-round-dark,
+  # DebianTheme, Next, ...) whose image files take precedence. Overwrite
+  # those PNGs directly with the Chakra art so whatever mechanism is
+  # already finding and displaying one shows our design. Covers the
+  # Debian/Next packages too now, not just Fluent* -- belt-and-braces for
+  # the LookAndFeelPackage setting above.
   local wp_pkg_dir wp_src_4k="$CONFIG_DIR/branding/wallpaper/wallpaper-3840x2160.png"
-  for wp_pkg_dir in "$ROOTFS/usr/share/wallpapers/"Fluent*; do
+  local img
+  for wp_pkg_dir in "$ROOTFS/usr/share/wallpapers/"Fluent* \
+                    "$ROOTFS/usr/share/wallpapers/DebianTheme" \
+                    "$ROOTFS/usr/share/wallpapers/Next"; do
     [[ -d "$wp_pkg_dir/contents/images" ]] || continue
-    local img
     for img in "$wp_pkg_dir/contents/images/"*.png; do
-      [[ -f "$img" ]] || continue
-      cp "$wp_src_4k" "$img"
+      [[ -f "$img" ]] && cp "$wp_src_4k" "$img"
     done
     log "Overwrote bundled wallpaper images in $(basename "$wp_pkg_dir") with the Chakra wallpaper."
   done
@@ -772,14 +826,40 @@ apply_permission_enforcement() {
 
   # USB Guard: the real daemon, bootstrapped to allow what's connected
   # at boot and block new insertions by default. See
-  # core/security/usbguard/README.md for the honest gap (no interactive
-  # "ask" prompt yet -- Daily mode's "ask" degrades to "block").
+  # core/security/usbguard/README.md.
   cp "$sec_cfg/usbguard/usbguard-daemon.conf" "$ROOTFS/etc/usbguard/usbguard-daemon.conf"
   mkdir -p "$ROOTFS/lib/systemd/system"
   cp "$sec_cfg/usbguard/chakra-usbguard-bootstrap.service" \
     "$ROOTFS/lib/systemd/system/chakra-usbguard-bootstrap.service"
   chroot "$ROOTFS" systemctl enable chakra-usbguard-bootstrap.service >/dev/null 2>&1 || true
   chroot "$ROOTFS" systemctl enable usbguard >/dev/null 2>&1 || true
+
+  # Desktop notifications for USB Guard events (usbguard-notifier, a real
+  # Debian package). Turns a blocked device insertion from a silent
+  # nothing into a visible "USB device blocked: <name>" pop-up -- so
+  # "ask" no longer degrades to a *silent* block. It's informational,
+  # not one-click interactive (to allow: `sudo usbguard allow-device
+  # <id>`); a real interactive prompt is still Phase 9. Needs: (a) the
+  # desktop user able to listen on the usbguard IPC socket, granted via
+  # an IPCAccessControl.d entry for the sudo group; (b) the usbguard
+  # D-Bus bridge; (c) session autostart.
+  mkdir -p "$ROOTFS/etc/usbguard/IPCAccessControl.d"
+  cp "$sec_cfg/usbguard/IPCAccessControl.d/chakra-desktop" \
+    "$ROOTFS/etc/usbguard/IPCAccessControl.d/:sudo"
+  chmod 0600 "$ROOTFS/etc/usbguard/IPCAccessControl.d/:sudo"
+  chroot "$ROOTFS" systemctl enable usbguard-dbus.service >/dev/null 2>&1 || true
+  mkdir -p "$ROOTFS/etc/xdg/autostart"
+  cat > "$ROOTFS/etc/xdg/autostart/chakra-usbguard-notifier.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=USB Guard Notifier
+Comment=Desktop notifications when USB Guard blocks or allows a device
+Exec=usbguard-notifier -w
+Terminal=false
+OnlyShowIn=KDE;
+X-KDE-autostart-phase=2
+NoDisplay=true
+EOF
 
   # Vault gets a menu entry (genuinely interactive: create/open/close/list);
   # File Inspector and Sandbox both need a target argument, so they're
