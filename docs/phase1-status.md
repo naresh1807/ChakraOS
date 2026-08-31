@@ -1,13 +1,20 @@
 # Phase 1 status — Core Build System
 
+> **Historical record.** Phase 1 closed long ago — the project is at Phase 8.
+> For current status see [`roadmap.md`](roadmap.md) and `CHANGELOG.md`. The
+> "Next step" section at the bottom is from Phase 1 and no longer applies.
+> Still accurate: the build environment notes below.
+
 ## Build environment
 
 Development moved from Kali Linux to Windows 10 + WSL2 (Ubuntu, kernel
 `6.18.33.2-microsoft-standard-WSL2`) on 2026-08-27, due to unrelated login
 issues on the Kali host. `debootstrap`/`chroot`/`mksquashfs`/`grub-mkrescue`
-all work the same under WSL2's real Linux kernel; the working checkout lives
-in WSL's native filesystem (`~/dev/ChakraOS`), not under `/mnt/e/...`, since
-`chroot`/`mount --bind` on a drvfs-mounted Windows path is unreliable.
+all work the same under WSL2's real Linux kernel. The **ISO builds from a
+checkout on WSL's native filesystem** (an ext4 path such as `~/dev/ChakraOS`),
+not from a drvfs-mounted Windows path (`/mnt/...`), where `chroot`/`mount
+--bind` is unreliable. Editing can happen anywhere; only the build has this
+constraint.
 
 Host dependencies (`debootstrap`, `squashfs-tools`, `xorriso`, `grub-pc-bin`,
 `grub-efi-amd64-bin`, `mtools`, `dosfstools`, `qemu-system-x86` — note the

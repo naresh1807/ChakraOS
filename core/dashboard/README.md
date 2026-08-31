@@ -14,13 +14,14 @@ What's actually here instead: each tool is a genuine, structured CLI command (in
 |---|---|
 | `chakra-health` | CPU temp (if `lm-sensors` finds a sensor — often unavailable in a VM), RAM/swap, root disk usage, failed systemd units, kernel errors since boot, pending updates |
 | `chakra-processlens [--pid N]` | Top processes by CPU, process tree; with `--pid`, detail on one process (cmdline, cwd, open file count, network connections) |
-| `chakra-loglens [--source boot\|kernel\|security\|app]` | Recent journald logs by source; `security` reads `/var/log/audit/audit.log` instead (needs root — run from Terminal (Admin) if it looks empty) |
+| `chakra-loglens [--source boot\|kernel\|security\|app]` | Recent journald logs by source; `security` reads `/var/log/audit/audit.log` instead. Readable as the normal user because the desktop account is in `adm` and `auditd` is set `log_group=adm` (Phase 8 — see `core/security/README.md`); says so plainly if it still can't read rather than returning empty. |
 | `chakra-devicewatch` | Connected USB devices, block/storage devices, network interfaces, paired Bluetooth |
 | `chakra-netguard` | Firewall (nftables) status, listening ports, established connections — display only; *active* blocking/alerting is Phase 9 (Chakra Shield) |
 | `chakra-command-center` | `dialog`-based TUI menu over all five — the "Command Center" from the master manual, minus the GUI polish |
 
+Phase 7's Sentinel now calls these, and Phase 8's USB Guard turns the read-only NetGuard/DeviceWatch view into actual enforcement for USB.
+
 ## What's deliberately not here yet
 
 - A real GUI (see above).
-- Any write/enforcement action — these tools only read and report. Phase 8 (AppGuard, USB Guard, etc.) is where read-only observation turns into enforcement.
-- Sentinel actually calling these — Phase 7. They're built to be called, not called yet.
+- Active enforcement beyond USB — NetGuard is still display-only; a firewall/connection *actor* is Phase 9 (Chakra Shield).
