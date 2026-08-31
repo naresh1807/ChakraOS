@@ -1,0 +1,95 @@
+#!/bin/bash
+# chakra-devenv -- Chakra dev-environment inspector.
+#
+# Point it at a project directory (default: $PWD). It reports:
+#   - what kind of project it is (from manifest files)
+#   - which language runtimes are installed, and their versions
+#   - the version a project pins, if it declares one, vs. what's installed
+#   - what a .env file in the project would set (keys only unless --show-values)
+#
+# It INSPECTS, it does not manage versions. Chakra ships a minimal
+# runtime set on purpose (it's a security OS); when something you need
+# is missing it tells you the apt package. For real per-project version
+# switching, install `direnv` (`apt install direnv`) or asdf/mise.
+#
+# Risk tier 0 (read-only). Usage: chakra-devenv [dir] [--show-values] [--json]
+set -u
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+dir="$PWD" show_values=0 json=0
+for a in "$@"; do
+  case "$a" in
+    --show-values) show_values=1 ;;
+    --json) json=1 ;;
+    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) [[ -d "$a" ]] && dir="$a" || { echo "not a directory: $a" >&2; exit 1; } ;;
+  esac
+done
+dir="$(cd "$dir" && pwd)"
+
+# --- detect project kinds -----------------------------------------------
+kinds=()
+[[ -f "$dir/package.json"      ]] && kinds+=("Node.js")
+[[ -f "$dir/requirements.txt" || -f "$dir/pyproject.toml" || -f "$dir/setup.py" || -f "$dir/Pipfile" ]] && kinds+=("Python")
+[[ -f "$dir/go.mod"           ]] && kinds+=("Go")
+[[ -f "$dir/Cargo.toml"       ]] && kinds+=("Rust")
+[[ -f "$dir/pom.xml" || -f "$dir/build.gradle" || -f "$dir/build.gradle.kts" ]] && kinds+=("Java/JVM")
+[[ -f "$dir/Gemfile"          ]] && kinds+=("Ruby")
+[[ -f "$dir/composer.json"    ]] && kinds+=("PHP")
+[[ -f "$dir/Dockerfile" || -f "$dir/Containerfile" || -f "$dir/compose.yaml" || -f "$dir/docker-compose.yml" ]] && kinds+=("Container")
+[[ ${#kinds[@]} -eq 0 ]] && kinds=("(no recognised manifest)")
+
+# --- runtimes: installed version + project pin ------------------------
+_v() { "$@" 2>/dev/null | head -1; }
+declare -A installed pinned
+installed[node]="$(command -v node >/dev/null 2>&1 && _v node --version || echo "not installed  (apt install nodejs npm)")"
+installed[python]="$(command -v python3 >/dev/null 2>&1 && _v python3 --version || echo "not installed  (apt install python3)")"
+installed[go]="$(command -v go >/dev/null 2>&1 && _v go version || echo "not installed  (apt install golang)")"
+installed[rust]="$(command -v rustc >/dev/null 2>&1 && _v rustc --version || echo "not installed  (apt install rustc cargo)")"
+installed[java]="$(command -v java >/dev/null 2>&1 && _v java -version 2>&1 || echo "not installed  (apt install default-jdk)")"
+installed[ruby]="$(command -v ruby >/dev/null 2>&1 && _v ruby --version || echo "not installed  (apt install ruby)")"
+
+[[ -f "$dir/.nvmrc"            ]] && pinned[node]="$(<"$dir/.nvmrc")"
+[[ -f "$dir/.node-version"     ]] && pinned[node]="$(<"$dir/.node-version")"
+if [[ -f "$dir/package.json" ]] && command -v jq >/dev/null 2>&1; then
+  e="$(jq -r '.engines.node // empty' "$dir/package.json" 2>/dev/null)"; [[ -n "$e" ]] && pinned[node]="$e"
+fi
+[[ -f "$dir/.python-version"   ]] && pinned[python]="$(<"$dir/.python-version")"
+[[ -f "$dir/go.mod"            ]] && pinned[go]="$(awk '/^go /{print $2; exit}' "$dir/go.mod")"
+[[ -f "$dir/.ruby-version"     ]] && pinned[ruby]="$(<"$dir/.ruby-version")"
+[[ -f "$dir/rust-toolchain" || -f "$dir/rust-toolchain.toml" ]] && pinned[rust]="declared (rust-toolchain)"
+
+# --- .env -------------------------------------------------------------
+envfile=""
+for f in "$dir/.env" "$dir/.env.local" "$dir/.env.development"; do [[ -f "$f" ]] && { envfile="$f"; break; }; done
+
+if [[ $json -eq 1 ]]; then
+  jq -n --arg dir "$dir" \
+    --argjson kinds "$(printf '%s\n' "${kinds[@]}" | jq -R . | jq -s .)" \
+    --arg envfile "${envfile:-}" \
+    '{directory:$dir, project_kinds:$kinds, env_file:($envfile|select(.!=""))}'
+  exit 0
+fi
+
+echo "Chakra Dev Environment"
+echo "======================"
+echo "Directory:   $dir"
+echo "Project:     ${kinds[*]}"
+echo
+echo "Runtimes:"
+for r in node python go rust java ruby; do
+  pin="${pinned[$r]:-}"
+  printf "  %-8s %s%s\n" "$r" "${installed[$r]}" "${pin:+   [project pins: $pin]}"
+done
+echo
+if [[ -n "$envfile" ]]; then
+  echo "Env file:    $envfile"
+  if [[ $show_values -eq 1 ]]; then
+    grep -vE '^\s*(#|$)' "$envfile" | sed 's/^/  /'
+  else
+    grep -vE '^\s*(#|$)' "$envfile" | sed -E 's/=.*/=•••/; s/^/  /'
+    echo "  (keys only -- 'chakra-devenv --show-values' to reveal, or 'direnv' to load them)"
+  fi
+else
+  echo "Env file:    none (.env / .env.local / .env.development)"
+fi

@@ -1,0 +1,28 @@
+#!/bin/bash
+# chakra-devhub -- dialog(1) TUI over the Chakra developer tools, same
+# shape as chakra-command-center (Phase 6). Not a GUI -- one obvious
+# place to reach Port Watch / Container Center / API Watch / Dev Env.
+set -u
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+BIN=/usr/lib/chakra/bin
+
+show() { "$@" 2>&1 | dialog --title "$1" --backtitle "Chakra DevHub" --programbox 24 110; }
+
+while true; do
+  choice=$(dialog --clear --backtitle "Chakra DevHub" --title "Chakra DevHub" \
+    --menu "Developer tooling" 16 66 6 \
+    1 "Port Watch      -- what's listening + who owns it" \
+    2 "Container Center -- podman containers / images / stats" \
+    3 "Dev Environment  -- project type, runtimes, .env (in \$PWD)" \
+    4 "API Watch        -- pick a port to sniff HTTP on (needs sudo)" \
+    0 "Exit" \
+    3>&1 1>&2 2>&3) || { clear; exit 0; }
+  case "$choice" in
+    1) show "$BIN/chakra-portwatch" ;;
+    2) show "$BIN/chakra-containers" all ;;
+    3) show "$BIN/chakra-devenv" "$PWD" ;;
+    4) p=$(dialog --inputbox "Local port to watch HTTP on:" 8 40 3000 3>&1 1>&2 2>&3) \
+         && clear && sudo "$BIN/chakra-apiwatch" "$p" ;;
+    0|"") clear; exit 0 ;;
+  esac
+done

@@ -1,0 +1,6 @@
+# Chakra Developer Tools menu (Phase 10).
+# Name|category_id|exec command|needs_root(0/1)
+Chakra DevHub|DevTools|chakra-devhub|0
+Port Watch|DevTools|chakra-portwatch|0
+Container Center|DevTools|chakra-containers all|0
+Dev Environment|DevTools|chakra-devenv|0

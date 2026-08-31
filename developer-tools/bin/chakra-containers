@@ -1,0 +1,58 @@
+#!/bin/bash
+# chakra-containers -- Chakra Container Center.
+#
+# A thin, opinionated view over podman (rootless, daemonless -- chosen
+# over Docker for a security OS: no root daemon, containers run as your
+# user). It does not reimplement anything; every subcommand is a
+# formatted podman call.
+#
+# Usage:
+#   chakra-containers                 running containers + a summary
+#   chakra-containers all             include stopped containers
+#   chakra-containers images          local images (with sizes)
+#   chakra-containers stats           live CPU/mem/net per container
+#   chakra-containers logs <name>     follow a container's logs
+#   chakra-containers ports           published ports, container by container
+#   chakra-containers prune           reclaim space (asks first)
+#   chakra-containers --json          machine-readable running set
+set -u
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+if ! command -v podman >/dev/null 2>&1; then
+  echo "podman is not installed."
+  echo "Chakra ships podman by default; if it's missing: sudo apt install podman"
+  echo "(Prefer Docker? Install it yourself -- Chakra defaults to rootless podman.)"
+  exit 1
+fi
+
+json=0; [[ "${1:-}" == "--json" ]] && { json=1; shift; }
+cmd="${1:-ps}"
+
+case "$cmd" in
+  ps|"")
+    if [[ $json -eq 1 ]]; then
+      podman ps --format json
+    else
+      echo "Chakra Container Center"
+      echo "======================"
+      podman ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' 2>/dev/null
+      local_run="$(podman ps -q 2>/dev/null | wc -l)"
+      local_all="$(podman ps -aq 2>/dev/null | wc -l)"
+      local_img="$(podman images -q 2>/dev/null | sort -u | wc -l)"
+      echo
+      echo "$local_run running, $((local_all - local_run)) stopped, $local_img image(s). 'chakra-containers all' / 'images' / 'stats' for more."
+    fi
+    ;;
+  all)     podman ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' ;;
+  images)  podman images --format 'table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.Created}}' ;;
+  stats)   podman stats ;;
+  logs)    shift; [[ $# -ge 1 ]] || { echo "usage: chakra-containers logs <name>" >&2; exit 1; }; podman logs -f "$1" ;;
+  ports)
+    for c in $(podman ps --format '{{.Names}}' 2>/dev/null); do
+      p="$(podman port "$c" 2>/dev/null)"
+      [[ -n "$p" ]] && { echo "$c:"; sed 's/^/  /' <<<"$p"; }
+    done
+    ;;
+  prune)   podman system prune ;;
+  *) echo "usage: chakra-containers {ps|all|images|stats|logs <name>|ports|prune}" >&2; exit 1 ;;
+esac

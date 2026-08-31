@@ -1,0 +1,52 @@
+#!/bin/bash
+# chakra-apiwatch -- watch plaintext HTTP traffic on a local port.
+#
+# For the everyday case: your frontend on :5173 hammering your API on
+# :3000 over http, and you want to see the requests fly by without
+# opening browser devtools. It's a formatted tcpdump -- request lines
+# (GET /path HTTP/1.1, Host:) and response status lines (HTTP/1.1 200).
+#
+# LIMITS, honestly:
+#  - plaintext HTTP only. TLS is opaque here -- for HTTPS use mitmproxy
+#    or Burp Suite from the Security Tools menu (Web App Analysis).
+#  - it sniffs the wire, it does not proxy -- no modification, no replay.
+#  - needs root (packet capture) or the CAP_NET_RAW capability.
+#
+# Usage:
+#   sudo chakra-apiwatch <port> [iface]      default iface: lo
+#   sudo chakra-apiwatch 3000
+#   sudo chakra-apiwatch 8080 eth0
+set -u
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+port="${1:-}"
+iface="${2:-lo}"
+
+if [[ -z "$port" || ! "$port" =~ ^[0-9]+$ ]]; then
+  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+  exit 1
+fi
+command -v tcpdump >/dev/null 2>&1 || { echo "tcpdump is not installed (apt install tcpdump)." >&2; exit 1; }
+if [[ $EUID -ne 0 ]] && ! getcap "$(command -v tcpdump)" 2>/dev/null | grep -q cap_net_raw; then
+  echo "chakra-apiwatch needs root for packet capture. Try: sudo chakra-apiwatch $port $iface" >&2
+  exit 1
+fi
+
+echo "chakra-apiwatch: $iface tcp/$port  --  HTTP request/response lines only (Ctrl-C to stop)"
+echo "-------------------------------------------------------------------------------"
+
+# -l line-buffered, -A ascii, -s0 full packets, -nn no name resolution.
+stdbuf -oL tcpdump -i "$iface" -A -s0 -nn -l "tcp port $port" 2>/dev/null \
+| stdbuf -oL awk '
+  /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) .* HTTP\/[0-9.]+\r?$/ {
+    ts = strftime("%H:%M:%S")
+    line = $0; sub(/\r$/,"",line)
+    printf "%s  ->  %s\n", ts, line; fflush(); next
+  }
+  /^HTTP\/[0-9.]+ [0-9]{3}/ {
+    ts = strftime("%H:%M:%S")
+    line = $0; sub(/\r$/,"",line)
+    printf "%s  <-  %s\n", ts, line; fflush(); next
+  }
+  /^Host: / { line=$0; sub(/\r$/,"",line); printf "              %s\n", line; fflush() }
+'

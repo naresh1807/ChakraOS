@@ -1,0 +1,18 @@
+<!DOCTYPE Menu PUBLIC "-//freedesktop//DTD Menu 1.0//EN"
+ "http://www.freedesktop.org/standards/menu-spec/menu-1.0.dtd">
+<!--
+  Chakra OS "Developer Tools" menu (Phase 10). Merged into the root
+  application menu via the standard XDG DefaultMergeDirs mechanism, the
+  same as config/chakra-tools-menu/ and config/security-menu/ -- see
+  those files' comments for the rationale.
+-->
+<Menu>
+  <Name>Applications</Name>
+  <Menu>
+    <Name>ChakraDevTools</Name>
+    <Directory>chakra-dev-tools.directory</Directory>
+    <Include>
+      <Category>X-Chakra-DevTools</Category>
+    </Include>
+  </Menu>
+</Menu>

@@ -58,6 +58,11 @@ firejail
 # used by chakra-shield-notify and chakra-usb-prompt for desktop alerts.
 libnotify-bin
 
+# Phase 10: developer tooling. podman = rootless, daemonless containers
+# (chosen over Docker for a security OS). chakra-apiwatch reuses tcpdump
+# (already in from Phase 2).
+podman
+
 # Audio foundation
 pipewire
 pipewire-pulse

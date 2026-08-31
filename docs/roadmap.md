@@ -19,13 +19,14 @@ Phases are ordered by dependency, not just topic — each phase only depends on 
 
 - **Phase 9 — Active defense: Chakra Shield.** `chakra-score` — a deterministic Security Score 0–100 with a per-check breakdown and one-line fixes (nftables default-deny, hardening sysctls *actually live*, auditd, USB Guard blocking, Shield running, updates, exposure, audit trail). `chakra-shield` — a systemd service that diffs network exposure and scans the OS audit log for auth-failure bursts; each finding → journald + `alerts.jsonl` + the Chakra Audit trail, with a `chakra-shield-notify` session bridge for desktop pop-ups. Blocking (nftables drop rules) is **opt-in** (`SHIELD_ACTIVE_BLOCK`, off by default — auto-blocking a pentest OS's deliberate listeners/peers would be wrong constantly). And `chakra-usb-prompt` — the interactive USB "ask" Phase 8 stubbed: a blocked insertion now pops Allow / Allow-and-remember / Keep blocked, wired to the usbguard IPC (the ACL gains `modify` for the session — the deliberate trade-off). Deferred: no ML/anomaly detection, no IDS engine (Suricata), no GUI. → `security-workspace/`
 
+- **Phase 10 — Developer tooling suite.** `chakra-portwatch` (what's listening, who owns it, localhost vs exposed, "what's on :3000"), `chakra-containers` (a formatted view over rootless/daemonless **podman**), `chakra-apiwatch` (`tcpdump`-formatted HTTP request/response lines on a local port — plaintext only, points at mitmproxy/Burp for TLS), `chakra-devenv` (project-kind + runtime-version + `.env` inspector — reports mismatches, doesn't manage versions), and `chakra-devhub` (a `dialog` TUI). New **Developer Tools** menu section. Chakra is a security OS not a dev distro, so this leans toward *inspecting/managing* a dev setup rather than being one. Deferred: runtime version management (asdf/mise), a bundled polyglot toolchain, HTTPS interception, Docker. → `developer-tools/`
+
 ## In progress
 
-*(nothing active — Phase 10 is next)*
+*(nothing active — Phase 11 is next)*
 
 ## Planned
 
-- **Phase 10 — Developer tooling suite.** DevHub, Env Manager, Port Watch, API Watch, Container Center. No AI/policy dependency — could run in parallel with 6–9. → `developer-tools/`
 - **Phase 11 — System maintenance & reliability.** Update, Snapshot, Recovery, Fixer, Clean, Store, Build Center. → `updater/`, `recovery/`, `app-center/`, `installer/`
 - **Phase 12 — Performance & daily-use polish.** Performance Engine, Battery AI, Search, Clipboard.
 - **Phase 13 — Security research environment.** Chakra Lab, Chakra Reporter — built on Phase 8's Sandbox and Phase 10's containers. → `security-workspace/`, `isolation/`

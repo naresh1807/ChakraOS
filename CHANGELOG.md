@@ -4,6 +4,20 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Dates ar
 
 ## [Unreleased]
 
+## 2026-08-31 — Phase 10: developer tooling suite
+
+### Added
+- `chakra-portwatch` — listening TCP/UDP sockets with owner + `local`/`EXPOSED` scope; `chakra-portwatch <port>` for detail + how to kill it; `--json`, `--watch`.
+- `chakra-containers` — a formatted view over rootless/daemonless **podman** (`ps`/`all`/`images`/`stats`/`logs`/`ports`/`prune`). Package: `podman`.
+- `chakra-apiwatch` — `sudo chakra-apiwatch <port>`: a `tcpdump`-formatted stream of HTTP request/response lines on a local port. Plaintext only (points at mitmproxy/Burp for TLS); sniffs, doesn't proxy.
+- `chakra-devenv` — project-kind detection from manifests, installed runtime versions vs. what a project pins (`.nvmrc`/`go.mod`/`.python-version`/…), `.env` inspection (keys only unless `--show-values`). `--json`.
+- `chakra-devhub` — `dialog` TUI over the four.
+- New **Developer Tools** menu section (`config/dev-tools-menu/`); `apply_dev_tools()` in `build_iso.sh`.
+
+### Design
+- Chakra ships `python3` + `git` and little else — this phase *inspects/manages* a dev environment rather than being one; `chakra-devenv` names the apt package for anything missing.
+- Deferred: runtime version management (asdf/mise — `direnv` is one `apt install` away), a bundled polyglot toolchain, HTTPS API interception, Docker (podman is the default).
+
 ## 2026-08-31 — Phase 9: active defense (Chakra Shield)
 
 ### Added
