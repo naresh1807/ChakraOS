@@ -1,0 +1,153 @@
+#!/bin/bash
+# chakra-fixer -- Chakra's "what's broken and can you fix it" tool.
+#
+# Runs a set of checks over the things that commonly go wrong, reports
+# each OK / WARN / FAIL with a one-line remedy, and -- with --fix and
+# root -- applies the safe repairs. It is deliberately conservative:
+# every --fix action is something you would reasonably run by hand.
+#
+# This is also the recommended first command in the GRUB "recovery
+# mode" entry.
+#
+# Usage:
+#   chakra-fixer            check only (no changes)
+#   sudo chakra-fixer --fix apply the safe repairs
+#   chakra-fixer --json     machine-readable
+set -u
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+do_fix=0 json=0
+for a in "$@"; do
+  case "$a" in
+    --fix)  do_fix=1 ;;
+    --json) json=1 ;;
+    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "chakra-fixer: unknown argument '$a'" >&2; exit 1 ;;
+  esac
+done
+[[ $do_fix -eq 1 && $EUID -ne 0 ]] && { echo "chakra-fixer --fix needs root. Try: sudo chakra-fixer --fix" >&2; exit 1; }
+
+results=()   # "name|status|detail|action_taken"
+_r() { results+=("$1|$2|$3|${4:-}"); }
+
+CHAKRA_SERVICES=(nftables auditd usbguard chakra-usbguard-bootstrap usbguard-dbus chakra-shield)
+
+# --- failed systemd units --------------------------------------------
+failed="$(systemctl --failed --no-legend 2>/dev/null | awk '{print $1}')"
+if [[ -z "$failed" ]]; then
+  _r "systemd units" OK "no failed units"
+else
+  act=""
+  if [[ $do_fix -eq 1 ]]; then
+    for u in $failed; do systemctl reset-failed "$u" 2>/dev/null; systemctl restart "$u" 2>/dev/null; done
+    still="$(systemctl --failed --no-legend 2>/dev/null | awk '{print $1}')"
+    act="restarted; still failed: ${still:-none}"
+  fi
+  _r "systemd units" WARN "failed: $(echo $failed | tr '\n' ' ')" "$act"
+fi
+
+# --- dpkg / apt state -----------------------------------------------
+if dpkg --audit 2>/dev/null | grep -q .; then
+  act=""
+  [[ $do_fix -eq 1 ]] && { dpkg --configure -a >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive apt-get -y --fix-broken install >/dev/null 2>&1; act="ran dpkg --configure -a + apt --fix-broken"; }
+  _r "package state" WARN "dpkg reports partially-configured/broken packages" "$act"
+else
+  _r "package state" OK "dpkg state is clean"
+fi
+
+# --- DNS resolution -------------------------------------------------
+if getent hosts deb.debian.org >/dev/null 2>&1; then
+  _r "DNS resolution" OK "deb.debian.org resolves"
+else
+  act=""
+  if [[ $do_fix -eq 1 ]]; then
+    systemctl restart systemd-resolved 2>/dev/null || true
+    [[ -L /etc/resolv.conf || -s /etc/resolv.conf ]] || printf 'nameserver 1.1.1.1\nnameserver 9.9.9.9\n' > /etc/resolv.conf
+    getent hosts deb.debian.org >/dev/null 2>&1 && act="restarted resolved / wrote fallback resolv.conf -- now resolving" || act="tried resolved restart + fallback -- still failing (check the network)"
+  fi
+  _r "DNS resolution" FAIL "cannot resolve deb.debian.org" "$act"
+fi
+
+# --- clock --------------------------------------------------------
+skew="$(timedatectl show -p NTPSynchronized --value 2>/dev/null)"
+if [[ "$skew" == "yes" ]]; then
+  _r "system clock" OK "NTP synchronised"
+else
+  act=""
+  [[ $do_fix -eq 1 ]] && { timedatectl set-ntp true 2>/dev/null; act="enabled NTP sync"; }
+  _r "system clock" WARN "clock is not NTP-synchronised (TLS / apt may complain)" "$act"
+fi
+
+# --- nftables loaded --------------------------------------------
+if nft list ruleset 2>/dev/null | grep -Eq 'hook input.*policy drop'; then
+  _r "firewall" OK "nftables ruleset loaded (input policy drop)"
+elif systemctl is-active --quiet nftables 2>/dev/null; then
+  _r "firewall" OK "nftables active"
+else
+  act=""
+  [[ $do_fix -eq 1 ]] && { systemctl enable --now nftables 2>/dev/null; nft -f /etc/nftables.conf 2>/dev/null; act="enabled nftables + loaded /etc/nftables.conf"; }
+  _r "firewall" FAIL "nftables is not active" "$act"
+fi
+
+# --- Chakra core services --------------------------------------
+down=()
+for s in "${CHAKRA_SERVICES[@]}"; do
+  systemctl is-active --quiet "$s" 2>/dev/null || systemctl is-active --quiet "$s.service" 2>/dev/null || down+=("$s")
+done
+if [[ ${#down[@]} -eq 0 ]]; then
+  _r "Chakra services" OK "all core services active"
+else
+  act=""
+  if [[ $do_fix -eq 1 ]]; then
+    for s in "${down[@]}"; do systemctl start "$s" 2>/dev/null || systemctl start "$s.service" 2>/dev/null; done
+    act="started: ${down[*]}"
+  fi
+  _r "Chakra services" WARN "not running: ${down[*]}" "$act"
+fi
+
+# --- /etc/chakra + audit trail --------------------------------
+if [[ -f /etc/chakra-release && -d /etc/chakra && -e /var/log/chakra/audit/sentinel.jsonl ]]; then
+  _r "Chakra core layout" OK "/etc/chakra-release, /etc/chakra, audit trail present"
+else
+  act=""
+  [[ $do_fix -eq 1 ]] && { systemd-tmpfiles --create /usr/lib/tmpfiles.d/chakra-core.conf 2>/dev/null; act="re-ran systemd-tmpfiles for chakra-core"; }
+  _r "Chakra core layout" WARN "part of the chakra-core layout is missing" "$act"
+fi
+
+# --- writable-overlay space ----------------------------------
+root_pct="$(df --output=pcent / 2>/dev/null | tail -1 | tr -dc '0-9')"
+if [[ -z "$root_pct" ]]; then
+  _r "disk space" WARN "could not read / usage"
+elif [[ "$root_pct" -lt 85 ]]; then
+  _r "disk space" OK "/ is ${root_pct}% full"
+else
+  _r "disk space" WARN "/ is ${root_pct}% full (live session: this is RAM) -- run chakra-clean"
+fi
+
+# --- output -----------------------------------------------------
+if [[ $json -eq 1 ]]; then
+  printf '{"fix_applied":%s,"checks":[' "$([[ $do_fix -eq 1 ]] && echo true || echo false)"
+  first=1
+  for c in "${results[@]}"; do
+    IFS='|' read -r n s d a <<<"$c"
+    [[ $first -eq 1 ]] || printf ','; first=0
+    jq -nc --arg name "$n" --arg status "$s" --arg detail "$d" --arg action "$a" \
+      '{name:$name,status:$status,detail:$detail,action:$action}'
+  done
+  printf ']}\n'
+  exit 0
+fi
+
+echo "Chakra Fixer   ($([[ $do_fix -eq 1 ]] && echo "repair mode" || echo "check only -- 'sudo chakra-fixer --fix' to repair"))"
+echo "============"
+bad=0
+for c in "${results[@]}"; do
+  IFS='|' read -r n s d a <<<"$c"
+  case "$s" in OK) m="[ OK ]";; WARN) m="[WARN]"; bad=1;; FAIL) m="[FAIL]"; bad=1;; esac
+  printf '  %s  %-22s %s\n' "$m" "$n" "$d"
+  [[ -n "$a" ]] && printf '         -> %s\n' "$a"
+done
+echo
+[[ $bad -eq 0 ]] && echo "Nothing to fix." || \
+  { [[ $do_fix -eq 1 ]] && echo "Repairs applied where safe. Re-run 'chakra-fixer' to confirm." \
+                        || echo "Run 'sudo chakra-fixer --fix' to apply the safe repairs."; }

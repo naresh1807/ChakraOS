@@ -63,6 +63,11 @@ libnotify-bin
 # (already in from Phase 2).
 podman
 
+# Phase 11: system maintenance. needrestart tells chakra-update which
+# services need a restart after an upgrade. zstd/tar (chakra-snapshot)
+# are already in the base.
+needrestart
+
 # Audio foundation
 pipewire
 pipewire-pulse

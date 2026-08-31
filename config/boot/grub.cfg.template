@@ -25,6 +25,14 @@ menuentry "Try Chakra OS @@CHAKRA_VERSION@@ (serial console debug)" {
     initrd /live/initrd.img
 }
 
+# Recovery mode: boots to a root shell (rescue.target) with the graphical
+# stack and most services held back. First command to run: chakra-fixer
+# (diagnose), then `sudo chakra-fixer --fix`. See recovery/README.md.
+menuentry "Chakra OS @@CHAKRA_VERSION@@ (recovery mode)" {
+    linux /live/vmlinuz boot=live components nomodeset systemd.unit=rescue.target
+    initrd /live/initrd.img
+}
+
 menuentry "Boot from first hard disk" {
     exit
 }

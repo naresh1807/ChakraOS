@@ -1,0 +1,6 @@
+# Chakra System Maintenance menu (Phase 11).
+# Name|category_id|exec command|needs_root(0/1)
+Chakra Fixer|Maintenance|chakra-fixer|0
+Chakra Update|Maintenance|chakra-update|0
+Chakra Clean|Maintenance|chakra-clean|0
+Chakra Snapshot|Maintenance|chakra-snapshot list|0

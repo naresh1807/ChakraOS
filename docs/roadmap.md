@@ -21,13 +21,14 @@ Phases are ordered by dependency, not just topic — each phase only depends on 
 
 - **Phase 10 — Developer tooling suite.** `chakra-portwatch` (what's listening, who owns it, localhost vs exposed, "what's on :3000"), `chakra-containers` (a formatted view over rootless/daemonless **podman**), `chakra-apiwatch` (`tcpdump`-formatted HTTP request/response lines on a local port — plaintext only, points at mitmproxy/Burp for TLS), `chakra-devenv` (project-kind + runtime-version + `.env` inspector — reports mismatches, doesn't manage versions), and `chakra-devhub` (a `dialog` TUI). New **Developer Tools** menu section. Chakra is a security OS not a dev distro, so this leans toward *inspecting/managing* a dev setup rather than being one. Deferred: runtime version management (asdf/mise), a bundled polyglot toolchain, HTTPS interception, Docker. → `developer-tools/`
 
+- **Phase 11 — System maintenance & reliability.** `chakra-fixer` (diagnose + `--fix` common breakage: failed units, broken dpkg/apt, DNS, clock, nftables not loaded, Chakra services down, overlay space), `chakra-update` (apt front-end + `needrestart` + Chakra-version context; warns loudly that a live session's upgrades don't persist), `chakra-clean` (reclaim overlay/RAM space — apt cache, journal, `~/.cache`, `/tmp`, podman), `chakra-snapshot` (config+home `.tar.zst` save/list/restore — *honestly a config archive*, not btrfs snapshots), a GRUB **recovery mode** entry (`rescue.target`, points at `chakra-fixer`), and a **System Maintenance** menu section. Deferred, all pending an installer (flagged since Phase 5): persistence, block-level snapshots/rollback, a Store beyond Discover, a Build Center, unattended upgrades. → `updater/`, `recovery/`
+
 ## In progress
 
-*(nothing active — Phase 11 is next)*
+*(nothing active — Phase 12 is next)*
 
 ## Planned
 
-- **Phase 11 — System maintenance & reliability.** Update, Snapshot, Recovery, Fixer, Clean, Store, Build Center. → `updater/`, `recovery/`, `app-center/`, `installer/`
 - **Phase 12 — Performance & daily-use polish.** Performance Engine, Battery AI, Search, Clipboard.
 - **Phase 13 — Security research environment.** Chakra Lab, Chakra Reporter — built on Phase 8's Sandbox and Phase 10's containers. → `security-workspace/`, `isolation/`
 - **Phase 14 — Identity & advanced boot hardening.** Passkeys, FIDO2, biometrics; matured boot chain.

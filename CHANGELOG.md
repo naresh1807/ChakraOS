@@ -4,6 +4,19 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Dates ar
 
 ## [Unreleased]
 
+## 2026-08-31 — Phase 11: system maintenance & reliability
+
+### Added
+- `chakra-fixer` — diagnose (`OK`/`WARN`/`FAIL` + remedy) and `sudo chakra-fixer --fix` (apply the safe repairs) over: failed systemd units, broken dpkg/apt state, DNS resolution, clock sync, nftables not loaded, Chakra core services down, chakra-core layout, `/` overlay space. `--json`.
+- `chakra-update` — apt front-end: Chakra version, upgradable + security count, `sudo chakra-update --apply` runs `full-upgrade` then lists services needing a restart (`needrestart`, added). Warns loudly that a live session's `/` is a RAM overlay so upgrades don't persist.
+- `chakra-clean` — reclaims space (apt cache, journal → last 50 MB, `~/.cache`, thumbnail caches, `/tmp` /`/var/tmp`, podman dangling); shows a plan with sizes, asks, reports free space before/after. `--dry-run`, `--yes`, `--autoremove`.
+- `chakra-snapshot` — `save` / `list` / `restore` a tar+zstd of `/etc/chakra` + the Chakra bits of `/etc` + `~` (minus caches). Honestly a config archive, not a filesystem snapshot.
+- GRUB **recovery mode** entry (`systemd.unit=rescue.target nomodeset`) + `/etc/profile.d/chakra-recovery-hint.sh` pointing at `chakra-fixer`.
+- New **System Maintenance** menu section (`config/maintenance-menu/`); `apply_maintenance()` in `build_iso.sh`.
+
+### Design / deferred
+- Everything is in-session on a live ISO. Persistence, block-level snapshots/rollback, a Store beyond Discover, a Build Center, and unattended upgrades all wait on an installer phase (flagged since Phase 5).
+
 ## 2026-08-31 — Phase 10: developer tooling suite
 
 ### Added

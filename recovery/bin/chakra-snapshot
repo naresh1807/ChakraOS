@@ -1,0 +1,85 @@
+#!/bin/bash
+# chakra-snapshot -- save / restore your Chakra configuration.
+#
+# HONESTLY: this is a config ARCHIVE, not a block-level or btrfs
+# snapshot. A real snapshot needs an installed system on a snapshotting
+# filesystem, and Chakra has no installer phase yet (see
+# docs/roadmap.md). What this does: tar+zstd your Chakra config
+# (/etc/chakra, the chakra bits of /etc, xdg autostart) and your home
+# directory minus the junk, so you can:
+#   - keep your live-session tweaks across a reboot (save to a USB stick)
+#   - carry your setup onto another Chakra machine / a future install
+#
+# Snapshots go to /var/lib/chakra/snapshots/ (root) or ~/chakra-snapshots
+# (user); pass a path to put them elsewhere (e.g. a mounted USB).
+#
+# Usage:
+#   chakra-snapshot save [name] [dest-dir]
+#   chakra-snapshot list [dir]
+#   chakra-snapshot restore <file.tar.zst>
+set -u
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+default_dir() { [[ $EUID -eq 0 ]] && echo /var/lib/chakra/snapshots || echo "$HOME/chakra-snapshots"; }
+
+ETC_ITEMS=(
+  /etc/chakra /etc/chakra-release
+  /etc/nftables.conf
+  /etc/sysctl.d/60-chakra-hardening.conf
+  /etc/usbguard/usbguard-daemon.conf /etc/usbguard/IPCAccessControl.d
+  /etc/sddm.conf.d
+)
+HOME_EXCLUDES=(
+  --exclude='.cache' --exclude='.local/share/Trash' --exclude='.thumbnails'
+  --exclude='node_modules' --exclude='.npm' --exclude='.cargo/registry'
+  --exclude='*/venv' --exclude='*/.venv' --exclude='.mozilla/firefox/*/cache2'
+)
+
+cmd="${1:-}"; shift || true
+
+case "$cmd" in
+  save)
+    name="${1:-config}"; dir="${2:-$(default_dir)}"
+    mkdir -p "$dir" || { echo "cannot write to $dir" >&2; exit 1; }
+    ts="$(date +%Y%m%d-%H%M%S)"
+    out="$dir/${name}-${ts}.tar.zst"
+    echo "Saving snapshot -> $out"
+    # collect the etc items that actually exist
+    etc_present=(); for p in "${ETC_ITEMS[@]}"; do [[ -e "$p" ]] && etc_present+=("$p"); done
+    home_target="$HOME"; [[ $EUID -eq 0 && -n "${SUDO_USER:-}" ]] && home_target="/home/$SUDO_USER"
+    tar --zstd -cf "$out" \
+        -C / "${etc_present[@]#/}" \
+        "${HOME_EXCLUDES[@]}" -C "$(dirname "$home_target")" "$(basename "$home_target")" \
+      2>/dev/null
+    [[ $EUID -eq 0 && -n "${SUDO_USER:-}" ]] && chown "$SUDO_USER" "$out"
+    echo "Done: $(du -h "$out" | cut -f1)"
+    echo "Restore with: chakra-snapshot restore $out"
+    ;;
+  list)
+    dir="${1:-$(default_dir)}"
+    echo "Snapshots in $dir:"
+    shopt -s nullglob
+    found=0
+    for f in "$dir"/*.tar.zst; do
+      found=1; printf "  %-40s %8s  %s\n" "$(basename "$f")" "$(du -h "$f"|cut -f1)" "$(date -r "$f" '+%Y-%m-%d %H:%M')"
+    done
+    [[ $found -eq 0 ]] && echo "  (none)"
+    ;;
+  restore)
+    f="${1:-}"
+    [[ -f "$f" ]] || { echo "no such snapshot: $f" >&2; exit 1; }
+    echo "This will OVERWRITE matching files under / and your home directory"
+    echo "from: $f"
+    tar --zstd -tf "$f" 2>/dev/null | sed 's/^/  /' | head -20
+    echo "  ..."
+    read -r -p "Proceed? [y/N] " ans; [[ "$ans" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+    if tar --zstd -tf "$f" 2>/dev/null | grep -q '^etc/'; then
+      [[ $EUID -eq 0 ]] || { echo "this snapshot contains /etc files -- restore as root: sudo chakra-snapshot restore $f" >&2; exit 1; }
+    fi
+    tar --zstd -xf "$f" -C / 2>/dev/null
+    echo "Restored. Some changes need a re-login or 'sudo chakra-fixer --fix'."
+    ;;
+  *)
+    echo "usage: chakra-snapshot {save [name] [dir] | list [dir] | restore <file>}" >&2
+    exit 1 ;;
+esac

@@ -1024,6 +1024,56 @@ EOF
   done < "$menu_cfg/tools.list"
 }
 
+apply_maintenance() {
+  log "Installing Chakra System Maintenance (Phase 11: Fixer, Update, Clean, Snapshot + recovery)..."
+  local menu_cfg="$PROJECT_ROOT/config/maintenance-menu"
+  local apps_dir="$ROOTFS/usr/share/applications"
+  local dirs_dir="$ROOTFS/usr/share/desktop-directories"
+  local merged_dir="$ROOTFS/etc/xdg/menus/applications-merged"
+  local bin_dir="$ROOTFS/usr/lib/chakra/bin"
+  mkdir -p "$apps_dir" "$dirs_dir" "$merged_dir" "$bin_dir" "$ROOTFS/var/lib/chakra/snapshots"
+
+  local f name
+  for f in "$PROJECT_ROOT/updater/bin/"* "$PROJECT_ROOT/recovery/bin/"*; do
+    name="$(basename "$f")"
+    cp "$f" "$bin_dir/$name"
+    chmod +x "$bin_dir/$name"
+    ln -sf "/usr/lib/chakra/bin/$name" "$ROOTFS/usr/local/bin/$name"
+  done
+
+  cp "$menu_cfg/chakra-maintenance.directory" "$dirs_dir/"
+  cp "$menu_cfg/chakra-maintenance.menu" "$merged_dir/"
+
+  local tname cat exec_cmd needs_root safe_id run_cmd
+  while IFS='|' read -r tname cat exec_cmd needs_root; do
+    [[ -z "$tname" || "$tname" == \#* ]] && continue
+    safe_id="$(echo "$tname" | tr -c 'a-zA-Z0-9' '-' | tr -s '-')"
+    run_cmd="$exec_cmd"
+    [[ "$needs_root" == "1" ]] && run_cmd="sudo $exec_cmd"
+    cat > "$apps_dir/chakra-tool-maint-$safe_id.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=$tname
+Icon=applications-system
+Exec=konsole -e bash -c "$run_cmd; echo; echo '--- press Enter to close ---'; read"
+Terminal=false
+Categories=X-Chakra-$cat;
+EOF
+  done < "$menu_cfg/tools.list"
+
+  # A short banner for whoever lands in the recovery-mode shell.
+  mkdir -p "$ROOTFS/etc/profile.d"
+  cat > "$ROOTFS/etc/profile.d/chakra-recovery-hint.sh" <<'EOF'
+if [ "$(systemctl get-default 2>/dev/null)" = "rescue.target" ] || systemctl is-active rescue.target >/dev/null 2>&1; then
+  echo
+  echo "  Chakra OS -- recovery mode."
+  echo "  Diagnose:  chakra-fixer          Repair:  sudo chakra-fixer --fix"
+  echo "  Then:      systemctl default     (to continue booting)"
+  echo
+fi
+EOF
+}
+
 build_squashfs() {
   log "Building squashfs from rootfs..."
   mkdir -p "$ISO_STAGE/live" "$ISO_STAGE/boot/grub"
@@ -1088,6 +1138,7 @@ main() {
   apply_permission_enforcement
   apply_chakra_shield
   apply_dev_tools
+  apply_maintenance
   cleanup_mounts
   build_squashfs
   stage_kernel_and_grub
