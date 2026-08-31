@@ -133,6 +133,16 @@ install_metasploit() {
   # dependencies (including PostgreSQL) that way. This is a large download
   # (multi-GB) and, unlike everything in packages.list, isn't a single
   # verifiable package name — best-effort and non-fatal if it fails.
+
+  # Skip the whole re-download on a rootfs that persists across rebuilds
+  # (build/rootfs is only wiped with --clean). msfinstall re-runs apt and
+  # can stall for minutes on raw.githubusercontent.com every rebuild for
+  # no gain when it's already installed.
+  if [[ "$CLEAN" -eq 0 ]] && chroot "$ROOTFS" dpkg -s metasploit-framework >/dev/null 2>&1; then
+    log "Metasploit already installed in rootfs — skipping (use --clean to reinstall)."
+    return 0
+  fi
+
   log "Installing Metasploit Framework (Rapid7 official installer — large download)..."
   # msfinstall's gpg key import prompts "Overwrite?" if a keyring from a
   # prior (e.g. interrupted) run already exists, and hangs forever since
@@ -142,7 +152,7 @@ install_metasploit() {
   chroot "$ROOTFS" bash -c '
     set -e
     cd /tmp
-    curl https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb > msfinstall
+    curl -fsSL --connect-timeout 15 --max-time 120 https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb > msfinstall
     chmod 755 msfinstall
     ./msfinstall < /dev/null
     rm -f msfinstall
@@ -159,6 +169,10 @@ install_metasploit() {
 install_nikto() {
   # Not in Debian's repos (confirmed via dry-run earlier), but it's just a
   # lightweight Perl script with no heavy installer — plain git clone.
+  if [[ "$CLEAN" -eq 0 && -x "$ROOTFS/opt/nikto/program/nikto.pl" ]]; then
+    log "Nikto already present in rootfs — skipping (use --clean to re-clone)."
+    return 0
+  fi
   log "Installing Nikto web server scanner from source (not in Debian repos)..."
   chroot "$ROOTFS" bash -c '
     set -e
@@ -176,11 +190,15 @@ install_burpsuite() {
   # from its BitRock InstallBuilder base as a best-effort guess — more
   # likely than anything else here to need manual follow-up in the live
   # session if the installer expects a display even in "quiet" mode.
+  if [[ "$CLEAN" -eq 0 && -x "$ROOTFS/opt/BurpSuiteCommunity/BurpSuiteCommunity" ]]; then
+    log "Burp Suite already present in rootfs — skipping (use --clean to re-download)."
+    return 0
+  fi
   log "Installing Burp Suite Community Edition (best-effort — undocumented silent flags)..."
   chroot "$ROOTFS" bash -c '
     set -e
     cd /tmp
-    curl -L -o burpsuite_installer.sh "https://portswigger.net/burp/releases/download?product=community&type=Linux"
+    curl -fL --connect-timeout 15 --max-time 600 -o burpsuite_installer.sh "https://portswigger.net/burp/releases/download?product=community&type=Linux"
     chmod +x burpsuite_installer.sh
     ./burpsuite_installer.sh -q -dir /opt/BurpSuiteCommunity
     rm -f burpsuite_installer.sh
@@ -412,18 +430,26 @@ apply_windows11_theme() {
   source "$CONFIG_DIR/defaults/user.conf"
   log "Installing Windows 11-style theme (Fluent icons/cursors + global theme)..."
 
-  chroot "$ROOTFS" bash -c '
-    set -e
-    rm -rf /tmp/theme-build
-    mkdir -p /tmp/theme-build
-    cd /tmp/theme-build
+  # Re-cloning + re-installing the Fluent themes on every rebuild is
+  # ~1-2 min of pure repeat work once they're in the rootfs. Skip it if
+  # the look-and-feel is already present (the pre-seed/discovery below
+  # reads the installed files either way). --clean forces a fresh pull.
+  if [[ "$CLEAN" -eq 1 ]] || ! chroot "$ROOTFS" bash -c 'ls /usr/share/plasma/look-and-feel 2>/dev/null | grep -qi fluent'; then
+    chroot "$ROOTFS" bash -c '
+      set -e
+      rm -rf /tmp/theme-build
+      mkdir -p /tmp/theme-build
+      cd /tmp/theme-build
 
-    git clone --depth 1 https://github.com/vinceliuice/Fluent-icon-theme.git
-    (cd Fluent-icon-theme && ./install.sh -a -d /usr/share/icons)
+      git clone --depth 1 https://github.com/vinceliuice/Fluent-icon-theme.git
+      (cd Fluent-icon-theme && ./install.sh -a -d /usr/share/icons)
 
-    git clone --depth 1 https://github.com/vinceliuice/Fluent-kde.git
-    (cd Fluent-kde && ./install.sh --round --color dark)
-  ' || { log "WARNING: theme download/install failed (network issue?) — continuing without Windows 11 theme."; return 0; }
+      git clone --depth 1 https://github.com/vinceliuice/Fluent-kde.git
+      (cd Fluent-kde && ./install.sh --round --color dark)
+    ' || { log "WARNING: theme download/install failed (network issue?) — continuing without Windows 11 theme."; return 0; }
+  else
+    log "Fluent theme already installed in rootfs — skipping re-clone (use --clean to refresh)."
+  fi
 
   # Discover the actual names the installers used rather than hardcoding guesses,
   # since these upstream projects can rename variants between releases.
