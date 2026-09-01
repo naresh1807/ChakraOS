@@ -1,0 +1,7 @@
+# Chakra Mobile menu (Phase 15).
+# Name|category_id|exec command|needs_root(0/1)
+# (entries run in a terminal, like the other Chakra menus; KDE Connect's
+#  own GUI settings page stays reachable from the system-tray applet and
+#  via `kdeconnect-settings`.)
+Phone Link|Mobile|chakra-link|0
+Pair a Phone|Mobile|chakra-link pair|0

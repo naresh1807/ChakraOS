@@ -4,6 +4,23 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Dates ar
 
 ## [Unreleased]
 
+## 2026-08-31 — Phase 15: mobile ecosystem
+
+### Added
+- `chakra-link` — one command over KDE Connect (`kdeconnect-cli` + `org.kde.kdeconnect` D-Bus) for the manual's Link → Sync → Share → Find:
+  - `pair [NAME]` / `unpair NAME` — TLS pairing with pinned device certs.
+  - `sync [NAME]` — which plugins (clipboard, notifications, run-command, MPRIS…) are live for a device.
+  - `send FILE | --text "…" | --url URL [NAME]` — push to the phone.
+  - `find [NAME]` — ring the phone; `find --ping` just tests the link.
+  - `status` (default) / `--json` — daemon state, this device's id, paired/reachable devices + phone battery, network exposure.
+- Security-first framing: KDE Connect listens on `1714-1764/tcp+udp` on all interfaces and Chakra is default-deny inbound, so `chakra-link` owns that trade-off — `firewall --open|--close|--status` (runtime nftables allow for RFC1918 LANs only, not persisted) and `off`/`on` (stop/start `kdeconnectd`, closing/reopening the ports). Desktop-initiated actions work without opening anything.
+- Every state-changing action → Chakra Audit trail (`actor=chakra-link`, risk tier 1–2).
+- New **Mobile** menu section (`config/mobile-menu/`); `apply_mobile()` in `build_iso.sh`. Package: `kdeconnect` (pinned; normally pulled by `kde-plasma-desktop`).
+
+### Design / deferred
+- The transport is KDE Connect — Phase 15 is the Chakra CLI/`--json`/audit/security layer on top, same as Phase 12 to Klipper.
+- Deferred: a Chakra-built mobile app + custom sync protocol (the client is KDE Connect's Android app; iOS is background-sandbox-limited), "Find" as real location / geofencing / remote wipe, SFTP filesystem browsing (needs `kio-extras` + `sshfs`), phone-screen mirror, full SMS/call UX, and pairing that survives a live-session reboot (→ `chakra-snapshot save` / an installer).
+
 ## 2026-08-31 — Phase 14: identity & advanced boot hardening
 
 ### Added

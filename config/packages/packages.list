@@ -91,6 +91,12 @@ fprintd
 libpam-fprintd
 fido2-tools
 
+# Phase 15: mobile ecosystem. kdeconnect (the transport chakra-link wraps
+# -- pairing, share, ring, clipboard/notification sync) is normally pulled
+# in by kde-plasma-desktop; pinned here explicitly. qdbus (from qttools5,
+# already in) reads its D-Bus state.
+kdeconnect
+
 # Audio foundation
 pipewire
 pipewire-pulse

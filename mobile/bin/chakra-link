@@ -1,0 +1,350 @@
+#!/bin/bash
+# chakra-link -- your phone, from the desktop and the terminal.
+#
+# Plasma ships KDE Connect (a system-tray applet and a Settings page).
+# This is the Chakra layer on top: one command for the four things you
+# actually do -- Link (pair), Sync (clipboard / notifications), Share
+# (send a file), Find (ring the phone) -- with --json, a Chakra Audit
+# record for every action that changes state, and an honest view of the
+# network exposure KDE Connect adds.
+#
+# SECURITY NOTE. KDE Connect listens on udp/tcp 1714-1764 on every
+# interface. Chakra's firewall is default-deny inbound, so a phone can't
+# reach the desktop until you run `chakra-link firewall --open` (which
+# adds a runtime nftables rule for RFC1918 LANs only; it does not persist
+# a reboot). Desktop-initiated actions -- pair, send, ring -- work
+# without opening anything, because outbound is allowed. Pairing itself
+# is TLS with pinned device certificates.
+#
+# The client is the KDE Connect Android app (F-Droid / Play Store); iOS
+# support is limited by the iOS sandbox. On a live ISO a pairing lasts
+# only the session -- persist ~/.config/kdeconnect with:
+#   chakra-snapshot save          (Phase 11)
+#
+# Usage:
+#   chakra-link                     status: daemon, devices, exposure
+#   chakra-link --json
+#   chakra-link devices             every known device + trust / reach
+#   chakra-link pair [NAME]         Link: request (or accept) pairing
+#   chakra-link unpair NAME
+#   chakra-link send FILE [NAME]    Share a file   (--text "…" | --url URL)
+#   chakra-link find [NAME]         Find: ring the phone
+#   chakra-link find --ping [NAME]  just test the link
+#   chakra-link sync [NAME]         which sync plugins are on for a device
+#   chakra-link firewall --open|--close|--status
+#   chakra-link off | on            stop / start the KDE Connect daemon
+set -u
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+CLI=kdeconnect-cli
+DBUS_SVC=org.kde.kdeconnect
+DEV_BASE=/modules/kdeconnect/devices
+KDECONNECT_PORTS="1714-1764"
+NFT_COMMENT="chakra-link: KDE Connect LAN"
+
+have() { command -v "$1" >/dev/null 2>&1; }
+_qdbus() { local q; for q in qdbus qdbus6 qdbus-qt5; do have "$q" && { "$q" "$@" 2>/dev/null; return; }; done; }
+
+_audit() {  # action target result [risk_tier]
+  have chakra-audit-log || return 0
+  chakra-audit-log --actor chakra-link --action "$1" --target "$2" \
+    --risk-tier "${4:-1}" --approved-by "user (direct invocation)" --result "$3" 2>/dev/null || true
+}
+
+_daemon() { pgrep -x kdeconnectd >/dev/null 2>&1; }
+
+_dev_ids()   { $CLI -l --id-only 2>/dev/null; }
+_dev_prop() {  # id iface-suffix prop
+  _qdbus "$DBUS_SVC" "$DEV_BASE/$1" "org.kde.kdeconnect.device${2:+.$2}.$3"
+}
+_name()  { local n; n="$(_dev_prop "$1" "" name)"; [[ -n "$n" ]] && echo "$n" || echo "$1"; }
+_reach() { [[ "$(_dev_prop "$1" "" isReachable)" == "true" ]] && echo yes || echo no; }
+_trust() { [[ "$(_dev_prop "$1" "" isTrusted)" == "true" ]] && echo yes || echo no; }
+_batt()  {  # -> "72% (charging)" | "72%" | ""
+  local c ch
+  c="$(_dev_prop "$1" battery charge)"
+  [[ "$c" =~ ^[0-9]+$ ]] || { echo ""; return; }
+  ch="$(_dev_prop "$1" battery isCharging)"
+  echo "$c%$([[ "$ch" == true ]] && echo ' (charging)')"
+}
+
+# Resolve a user-supplied NAME or ID (or nothing) to exactly one device id.
+_resolve() {
+  local want="${1:-}" ids=() id lw
+  mapfile -t ids < <(_dev_ids)
+  [[ ${#ids[@]} -eq 0 ]] && { echo "no known devices -- pair one first (chakra-link pair)" >&2; return 1; }
+  if [[ -z "$want" ]]; then
+    if [[ ${#ids[@]} -eq 1 ]]; then echo "${ids[0]}"; return 0; fi
+    echo "several devices known -- name one: $(for id in "${ids[@]}"; do printf '%s ' "$(_name "$id")"; done)" >&2
+    return 1
+  fi
+  for id in "${ids[@]}"; do [[ "$id" == "$want" ]] && { echo "$id"; return 0; }; done
+  lw="$(printf '%s' "$want" | tr 'A-Z' 'a-z')"
+  for id in "${ids[@]}"; do
+    [[ "$(_name "$id" | tr 'A-Z' 'a-z')" == *"$lw"* ]] && { echo "$id"; return 0; }
+  done
+  echo "no device matches '$want'" >&2; return 1
+}
+
+_listening() {  # KDE Connect sockets actually open, from ss
+  have ss || return 0
+  ss -H -tulnp 2>/dev/null | awk '$5 ~ /:17[0-6][0-9]$/ {print $1, $5}'
+}
+
+_fw_rule_present() {
+  have nft || return 1
+  nft list ruleset 2>/dev/null | grep -q "$NFT_COMMENT"
+}
+_fw_state() {
+  have nft || { echo "n/a (nft absent)"; return; }
+  if nft list ruleset >/dev/null 2>&1; then
+    _fw_rule_present && echo "open (chakra-link LAN rule is live)" || echo "closed (default-deny inbound)"
+    return
+  fi
+  # Unprivileged: can't read the live ruleset. Fall back to the persistent
+  # config -- it can't show a runtime `firewall --open`, but it does tell
+  # us the baseline (chakra-link's own rule is never written there).
+  if grep -Eqs 'policy[[:space:]]+drop' /etc/nftables.conf; then
+    echo "default-deny inbound (sudo chakra-link firewall --status for the live rule)"
+  else
+    echo "unknown (run as root to read the ruleset)"
+  fi
+}
+_fw_token() {  # machine-readable: open | closed | default-deny | unknown | n/a
+  have nft || { echo "n/a"; return; }
+  if nft list ruleset >/dev/null 2>&1; then
+    _fw_rule_present && echo open || echo closed
+  elif grep -Eqs 'policy[[:space:]]+drop' /etc/nftables.conf; then
+    echo default-deny
+  else
+    echo unknown
+  fi
+}
+
+_need_daemon() {
+  _daemon && return 0
+  echo "KDE Connect daemon isn't running. Start it:  chakra-link on" >&2
+  return 1
+}
+
+# ---------------------------------------------------------------- actions
+
+do_pair() {
+  _need_daemon || exit 1
+  local want="${1:-}" id
+  if [[ -z "$want" ]]; then
+    echo "Looking for devices (open the KDE Connect app on the phone)..."
+    $CLI --refresh >/dev/null 2>&1; sleep 1
+    $CLI -l
+    echo
+    echo "Then:  chakra-link pair <name>"
+    return 0
+  fi
+  id="$(_resolve "$want")" || exit 1
+  if [[ "$(_trust "$id")" == yes ]]; then echo "'$(_name "$id")' is already paired."; return 0; fi
+  echo "Requesting pairing with '$(_name "$id")' -- accept the prompt on the phone."
+  $CLI -d "$id" --pair
+  local ok; ok="$(_trust "$id")"
+  _audit "link.pair" "$(_name "$id")" "trusted=$ok" 2
+  [[ "$ok" == yes ]] && echo "Paired." || echo "Not paired yet (no confirmation from the phone)."
+}
+
+do_unpair() {
+  _need_daemon || exit 1
+  local id; id="$(_resolve "${1:-}")" || exit 1
+  local n; n="$(_name "$id")"
+  $CLI -d "$id" --unpair && echo "Unpaired '$n'."
+  _audit "link.unpair" "$n" "done" 1
+}
+
+do_send() {
+  _need_daemon || exit 1
+  local mode=file payload=""
+  case "${1:-}" in
+    --text) mode=text; payload="${2:-}"; shift 2 ;;
+    --url)  mode=url;  payload="${2:-}"; shift 2 ;;
+    "")     echo "usage: chakra-link send FILE|--text \"…\"|--url URL [NAME]" >&2; exit 1 ;;
+    *)      payload="$1"; shift ;;
+  esac
+  local id; id="$(_resolve "${1:-}")" || exit 1
+  local n; n="$(_name "$id")"
+  [[ "$(_reach "$id")" == yes ]] || { echo "'$n' isn't reachable right now." >&2; exit 1; }
+  case "$mode" in
+    file)
+      [[ -f "$payload" ]] || { echo "no such file: $payload" >&2; exit 1; }
+      $CLI -d "$id" --share "$payload" && echo "Sent $(basename "$payload") -> $n."
+      _audit "link.share" "$n:$(basename "$payload")" "file" 1 ;;
+    text)
+      $CLI -d "$id" --share-text "$payload" && echo "Sent text -> $n."
+      _audit "link.share" "$n" "text" 1 ;;
+    url)
+      $CLI -d "$id" --share "$payload" && echo "Sent URL -> $n."
+      _audit "link.share" "$n:$payload" "url" 1 ;;
+  esac
+}
+
+do_find() {
+  _need_daemon || exit 1
+  local ping=0; [[ "${1:-}" == "--ping" ]] && { ping=1; shift; }
+  local id; id="$(_resolve "${1:-}")" || exit 1
+  local n; n="$(_name "$id")"
+  [[ "$(_reach "$id")" == yes ]] || { echo "'$n' isn't reachable right now." >&2; exit 1; }
+  if [[ $ping -eq 1 ]]; then
+    $CLI -d "$id" --ping && echo "Pinged '$n'."
+    _audit "link.ping" "$n" "sent"
+  else
+    $CLI -d "$id" --ring && echo "Ringing '$n' -- it'll sound even on silent."
+    _audit "link.find" "$n" "ring" 1
+  fi
+}
+
+do_sync() {
+  _need_daemon || exit 1
+  local id; id="$(_resolve "${1:-}")" || exit 1
+  echo "Sync plugins for '$(_name "$id")':"
+  local plugins p on
+  plugins="$(_qdbus "$DBUS_SVC" "$DEV_BASE/$id" org.kde.kdeconnect.device.loadedPlugins 2>/dev/null)"
+  for p in clipboard notifications runcommand mpriscontrol share battery; do
+    on=no; grep -q "kdeconnect_$p" <<<"$plugins" && on=yes
+    printf '  %-16s %s\n' "$p" "$on"
+  done
+  echo
+  echo "Toggle these in KDE Connect Settings  (run: kdeconnect-settings)."
+}
+
+do_firewall() {
+  case "${1:---status}" in
+    --status|"")
+      echo "KDE Connect inbound ($KDECONNECT_PORTS): $(_fw_state)" ;;
+    --open)
+      [[ $EUID -eq 0 ]] || { echo "sudo chakra-link firewall --open" >&2; exit 1; }
+      have nft || { echo "nft missing" >&2; exit 1; }
+      _fw_rule_present && { echo "Already open."; exit 0; }
+      # Allow the KDE Connect port range from private LANs only, appended
+      # to the existing Chakra input chain. Runtime only -- not written to
+      # /etc/nftables.conf, so a reboot closes it again.
+      local lan
+      for lan in 192.168.0.0/16 10.0.0.0/8 172.16.0.0/12; do
+        nft add rule inet chakra_filter input ip saddr "$lan" udp dport 1714-1764 accept comment "$NFT_COMMENT" 2>/dev/null
+        nft add rule inet chakra_filter input ip saddr "$lan" tcp dport 1714-1764 accept comment "$NFT_COMMENT" 2>/dev/null
+      done
+      if _fw_rule_present; then
+        echo "Opened $KDECONNECT_PORTS for RFC1918 LANs (this session only)."
+        _audit "link.firewall" "$KDECONNECT_PORTS" "open" 2
+      else
+        echo "Could not add the rule (is 'inet chakra_filter' loaded? nft list ruleset)." >&2
+      fi ;;
+    --close)
+      [[ $EUID -eq 0 ]] || { echo "sudo chakra-link firewall --close" >&2; exit 1; }
+      local h
+      while read -r h; do
+        [[ -n "$h" ]] && nft delete rule inet chakra_filter input handle "$h" 2>/dev/null
+      done < <(nft -a list chain inet chakra_filter input 2>/dev/null \
+                 | awk -v c="$NFT_COMMENT" 'index($0,c){for(i=1;i<=NF;i++) if($i=="handle") print $(i+1)}')
+      _fw_rule_present && echo "Some rules remain -- see 'nft -a list chain inet chakra_filter input'." \
+        || { echo "Closed."; _audit "link.firewall" "$KDECONNECT_PORTS" "close" 2; } ;;
+    *) echo "usage: chakra-link firewall --open|--close|--status" >&2; exit 1 ;;
+  esac
+}
+
+do_power() {
+  case "$1" in
+    off)
+      _daemon || { echo "Already stopped."; exit 0; }
+      if have kquitapp5; then kquitapp5 kdeconnectd >/dev/null 2>&1 || pkill -x kdeconnectd
+      else pkill -x kdeconnectd; fi
+      sleep 1
+      _daemon && echo "Still running (?)." \
+        || { echo "Stopped. The $KDECONNECT_PORTS listeners are closed."; _audit "link.daemon" "kdeconnectd" "off"; } ;;
+    on)
+      _daemon && { echo "Already running."; exit 0; }
+      local d
+      d="$(ls /usr/lib/*/libexec/kdeconnectd /usr/libexec/kdeconnectd 2>/dev/null | head -1)"
+      if [[ -n "$d" ]]; then setsid "$d" >/dev/null 2>&1 &
+      else $CLI --refresh >/dev/null 2>&1; fi
+      sleep 2
+      _daemon && { echo "Started."; _audit "link.daemon" "kdeconnectd" "on"; } \
+        || echo "Couldn't start it -- log out and back in, or open KDE Connect from the tray." ;;
+  esac
+}
+
+# ---------------------------------------------------------------- status
+
+status_json() {
+  local ids=() id arr="[]"
+  mapfile -t ids < <(_dev_ids)
+  for id in "${ids[@]}"; do
+    [[ -z "$id" ]] && continue
+    arr="$(jq -c --arg id "$id" --arg name "$(_name "$id")" \
+      --arg trusted "$(_trust "$id")" --arg reachable "$(_reach "$id")" \
+      --arg battery "$(_batt "$id")" \
+      '. + [{id:$id,name:$name,trusted:($trusted=="yes"),reachable:($reachable=="yes"),battery:$battery}]' <<<"$arr")"
+  done
+  jq -n --argjson devices "$arr" \
+    --arg daemon "$(_daemon && echo running || echo stopped)" \
+    --arg firewall "$(_fw_token)" \
+    --arg my_id "$($CLI --my-id 2>/dev/null)" \
+    '{daemon:$daemon, my_id:$my_id, firewall:$firewall, ports:"1714-1764/tcp+udp", devices:$devices}'
+}
+
+status_human() {
+  echo "Chakra Link  --  phone <-> desktop"
+  echo "================================="
+  echo
+  echo "KDE Connect daemon: $(_daemon && echo running || echo 'stopped   (chakra-link on)')"
+  local myid; myid="$($CLI --my-id 2>/dev/null)"
+  echo "This device id:     ${myid:-?}"
+  echo
+  local ids=() id n b
+  mapfile -t ids < <(_dev_ids)
+  if [[ ${#ids[@]} -eq 0 || -z "${ids[0]}" ]]; then
+    echo "Devices:            none known"
+    echo "                   pair your phone:  chakra-link pair"
+  else
+    echo "Devices"
+    for id in "${ids[@]}"; do
+      [[ -z "$id" ]] && continue
+      n="$(_name "$id")"
+      printf '  %-22s %s' "$n" "$([[ "$(_trust "$id")" == yes ]] && echo paired || echo 'NOT paired')"
+      [[ "$(_reach "$id")" == yes ]] && printf ', reachable' || printf ', offline'
+      b="$(_batt "$id")"; [[ -n "$b" ]] && printf ', battery %s' "$b"
+      printf '\n'
+    done
+  fi
+  echo
+  echo "Network exposure"
+  echo "  Firewall (1714-1764 inbound): $(_fw_state)"
+  local l; l="$(_listening)"
+  if [[ -n "$l" ]]; then
+    echo "  Listening sockets:"
+    sed 's/^/    /' <<<"$l"
+  fi
+  echo "  KDE Connect uses TLS with pinned certs. Default-deny inbound means"
+  echo "  only desktop-initiated actions work until you run"
+  echo "  'sudo chakra-link firewall --open' (LAN only, not persistent)."
+  echo
+  echo "  Stop it entirely (closes the ports):  chakra-link off"
+}
+
+# ---------------------------------------------------------------- dispatch
+
+have "$CLI" || { echo "kdeconnect-cli not found -- is the 'kdeconnect' package installed?" >&2; exit 1; }
+
+json=0; [[ "${1:-}" == "--json" ]] && { json=1; shift; }
+cmd="${1:-status}"; shift || true
+
+case "$cmd" in
+  status|"")   if [[ $json -eq 1 ]]; then status_json; else status_human; fi ;;
+  devices)     $CLI -l ;;
+  pair)        do_pair "${1:-}" ;;
+  unpair)      do_unpair "${1:-}" ;;
+  send|share)  do_send "$@" ;;
+  find|ring)   do_find "$@" ;;
+  sync)        do_sync "${1:-}" ;;
+  firewall|fw) do_firewall "${1:---status}" ;;
+  off)         do_power off ;;
+  on)          do_power on ;;
+  -h|--help)   sed -n '2,44p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "usage: chakra-link {status|devices|pair|unpair|send|find|sync|firewall|off|on}" >&2; exit 1 ;;
+esac
+exit 0

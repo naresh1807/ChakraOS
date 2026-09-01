@@ -6,7 +6,7 @@ See `docs/` for phase-by-phase status and the full roadmap.
 
 ## Status
 
-**Phases 1–14 complete.** A reproducible Debian 12 (bookworm) + KDE Plasma 5.27 live ISO that:
+**Phases 1–15 complete.** A reproducible Debian 12 (bookworm) + KDE Plasma 5.27 live ISO that:
 
 - boots to a Windows 11-styled Plasma desktop with a full Sudarshana Chakra identity (boot splash, wallpaper, login screen, desktop icons, familiar app naming);
 - ships ~49 curated security/forensics apt packages plus Metasploit, Nikto and Burp Suite Community, in a Kali-style categorized "Security Tools" menu;
@@ -20,9 +20,10 @@ See `docs/` for phase-by-phase status and the full roadmap.
 - has **system-maintenance tools**: `chakra-fixer` (diagnose + repair common breakage), `chakra-update`, `chakra-clean`, `chakra-snapshot` (config archive), and a GRUB recovery-mode entry;
 - has **performance & daily-use tools**: `chakra-perf` (power profiles / "what's slow"), `chakra-battery` (heuristic advisor), `chakra-search` (unified CLI search), `chakra-clip` (terminal clipboard);
 - has a **security research environment**: `chakra-lab` (isolated firejail/podman workspace for untrusted samples — drop/scan/triage) and `chakra-reporter` (structured findings-report builder);
-- has **`chakra-identity`** — auth-posture report + FIDO2 security-key / fingerprint enrolment (Secure Boot / TPM boot-chain hardening is deferred to an installer).
+- has **`chakra-identity`** — auth-posture report + FIDO2 security-key / fingerprint enrolment (Secure Boot / TPM boot-chain hardening is deferred to an installer);
+- has **`chakra-link`** — phone ⟷ desktop over KDE Connect (pair / sync / send / ring), with `--json`, an audit record per action, and an explicit view + on/off switch for the 1714-1764 exposure it adds.
 
-Everything past Phase 14 (`mobile/`, `office/`, `compatibility/`, `installer/`, …) mirrors the project's long-term architecture and is empty scaffolding until its phase begins. See `docs/roadmap.md` for the full breakdown — deliberate deferrals (a real local LLM, AppGuard, Secure Boot) are called out there and in each area's `README.md`.
+Everything past Phase 15 (`office/`, `compatibility/`, `installer/`, …) mirrors the project's long-term architecture and is empty scaffolding until its phase begins. See `docs/roadmap.md` for the full breakdown — deliberate deferrals (a real local LLM, AppGuard, Secure Boot) are called out there and in each area's `README.md`.
 
 ## Layout
 
@@ -37,6 +38,7 @@ Everything past Phase 14 (`mobile/`, `office/`, `compatibility/`, `installer/`, 
 - `updater/`, `recovery/` — Phase 11: `chakra-update`/`chakra-clean` and `chakra-fixer`/`chakra-snapshot`.
 - `performance/` — Phase 12: `chakra-perf`, `chakra-battery`, `chakra-search`, `chakra-clip`.
 - `identity/` — Phase 14: `chakra-identity`.
+- `mobile/` — Phase 15: `chakra-link` (KDE Connect front-end).
 - Every other top-level directory mirrors the project's long-term architecture; see `docs/roadmap.md`.
 
 ## Building the ISO
