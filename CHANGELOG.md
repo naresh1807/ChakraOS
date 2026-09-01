@@ -4,6 +4,22 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Dates ar
 
 ## [Unreleased]
 
+## 2026-09-01 — Phase 16: Chakra Shell
+
+### Added
+- `chakra-shell` — the desktop-shell control CLI:
+  - `theme dark | light | high-contrast | auto | fluent` — switch the colour scheme live (`plasma-apply-colorscheme` when a Plasma session is up) and persist to `kdeglobals` + `plasmarc`; `fluent` restores the Phase 3 Windows-11 look.
+  - `auto [off]` — installs/removes a `systemd --user` timer (`chakra-shell-auto.timer`, every 15 min) that flips light ↔ dark by the clock (`AUTO_LIGHT` / `AUTO_DARK` in `~/.config/chakra/shell.conf`, default 07:00 / 19:00).
+  - `layout reset` — rebuild the Chakra panel from the look-and-feel template (asks first).
+  - `status` / `--json` — theme mode, colour scheme, look-and-feel, Plasma/icon theme, auto-timer state, and an explicit note that the launcher/dock/panel/notifications are stock Plasma.
+- Three Chakra-branded `KColorScheme` files — `ChakraDark`, `ChakraLight`, `ChakraHighContrast` (orange-on-blue) — installed to `/usr/share/color-schemes/`.
+- New **Appearance** menu section (`config/appearance-menu/`); `apply_shell()` in `build_iso.sh`. The Phase 3 boot default (Fluent-round-dark / FluentDark) is left untouched.
+- `desktop/launcher/README.md`, `desktop/workspace-manager/README.md` — what the deferred custom-QML shell components entail.
+
+### Design / deferred
+- Rebuilding the launcher, dock, panel and notification centre as fully-custom Chakra QML components (the manual's Phase 16 aspiration) is a standalone Qt/QML project — Plasma's widgets are mature (multi-monitor, activities, accessibility, notification history) and a partial reimplementation would drop features. Stock Plasma stays, fully Chakra-themed and switchable. Same honest call as Phase 8's AppGuard / Phase 15's "the transport is KDE Connect".
+- On a live ISO a theme change lasts the session; `chakra-snapshot save` persists `~/.config/chakra` + the kdeglobals edits.
+
 ## 2026-08-31 — Phase 15: mobile ecosystem
 
 ### Added

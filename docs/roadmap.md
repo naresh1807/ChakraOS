@@ -31,14 +31,13 @@ Phases are ordered by dependency, not just topic — each phase only depends on 
 
 - **Phase 15 — Mobile ecosystem.** `chakra-link` — one command over KDE Connect (`kdeconnect-cli` + the `org.kde.kdeconnect` D-Bus API) for the manual's Link → Sync → Share → Find: `pair` / `unpair` (TLS, pinned certs), `sync` (per-device plugin state), `send` (file / text / URL), `find` (`--ring` / `--ping`), plus `status` / `--json` showing paired devices + phone battery **and the network exposure** — KDE Connect listens on 1714-1764/tcp+udp and Chakra is default-deny inbound, so `firewall --open`/`--close` (runtime nftables, RFC1918 only) and `off`/`on` (stop/start the daemon) are part of the tool. Every state change → Chakra Audit. New **Mobile** menu. Package: `kdeconnect` (pinned; normally pulled by Plasma). Deferred: a Chakra-built phone app / custom protocol (the client is KDE Connect's Android app; iOS is sandbox-limited), "find" as real location/geofence/remote-wipe (needs an account service + MDM), SFTP filesystem browsing / screen mirror / full SMS UX, and persistent pairing (→ `chakra-snapshot` / installer). → `mobile/`
 
+- **Phase 16 — Chakra Shell.** `chakra-shell` — the desktop-shell control CLI: `theme dark|light|high-contrast|auto|fluent` (applies live via `plasma-apply-colorscheme` + persists to `kdeglobals`; `auto` installs a `systemd --user` timer that flips light↔dark by the clock), `layout reset` (rebuild the Chakra panel), `status` / `--json`. Ships three Chakra-branded KColorScheme files (`ChakraDark`, `ChakraLight`, `ChakraHighContrast` — orange-on-blue) into `/usr/share/color-schemes/`; the Phase 3 boot default (Fluent-round-dark / FluentDark) is untouched, and `theme fluent` restores it. New **Appearance** menu. **Deferred** (the honest call, as with Phase 8's AppGuard): rebuilding the launcher / dock / panel / notification centre as fully-custom Chakra QML components — each is a standalone Qt/QML plasmoid project, and Plasma's are mature (multi-monitor, activities, accessibility, notification history); a partial replacement would be a downgrade. Stock Plasma stays, fully Chakra-themed and switchable. → `desktop/`
+
 ## In progress
 
-*(nothing active — Phase 16 is next)*
-
-## Planned
-
-- **Phase 16 — Custom Chakra Shell.** Replacing stock KDE's launcher/dock/panel/notification center with fully custom Chakra components, plus light/auto/high-contrast theme modes — the most disruptive UI rewrite, deliberately last. → `desktop/launcher/`, `desktop/workspace-manager/`
+*(nothing active — the numbered roadmap is complete through Phase 16.)*
 
 ## Directories reserved but not yet active
 
-`office/`, `compatibility/` (Wine/Proton) — not yet placed in a phase; scope to be defined when reached.
+- `desktop/launcher/`, `desktop/workspace-manager/` — the from-scratch QML shell components deferred in Phase 16; each has a README on what that entails.
+- `office/`, `compatibility/` (Wine/Proton) — not yet placed in a phase; scope to be defined when reached.

@@ -1,0 +1,255 @@
+#!/bin/bash
+# chakra-shell -- the Chakra desktop shell: theme mode and layout.
+#
+# HONESTLY: the master manual's Phase 16 wants the launcher, dock, panel
+# and notification centre rebuilt as fully custom Chakra QML components.
+# That is a standalone Qt/QML project (scaffolded at desktop/launcher/
+# and desktop/workspace-manager/) -- stock Plasma's widgets are mature,
+# multi-monitor- and accessibility-aware, and completely themable, and a
+# half-finished replacement that dropped any of that would be a
+# downgrade. What Phase 16 ships now: the Chakra colour system -- real
+# Chakra-branded schemes, not borrowed ones -- with light / dark /
+# high-contrast / auto modes, plus one command to switch them and to put
+# the panel back the way Chakra ships it.
+#
+# On a live ISO a change lasts the session; persist it with
+#   chakra-snapshot save          (Phase 11)
+#
+# Usage:
+#   chakra-shell                              current shell state
+#   chakra-shell --json
+#   chakra-shell theme dark|light|high-contrast|auto|fluent
+#   chakra-shell auto [off]                   day/night switching on / off
+#   chakra-shell layout reset                 rebuild the Chakra panel
+set -u
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/chakra"
+CONF="$CONF_DIR/shell.conf"
+UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+FLUENT_LNF=com.github.vinceliuice.Fluent-round-dark
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+_audit() {  # action target result
+  have chakra-audit-log || return 0
+  chakra-audit-log --actor chakra-shell --action "$1" --target "$2" \
+    --risk-tier 1 --approved-by "user (direct invocation)" --result "$3" 2>/dev/null || true
+}
+
+_conf_get() { [[ -f "$CONF" ]] && sed -n "s/^$1=//p" "$CONF" | tail -1 || true; }
+_conf_set() {
+  mkdir -p "$CONF_DIR"
+  [[ -f "$CONF" ]] || : > "$CONF"
+  if grep -q "^$1=" "$CONF" 2>/dev/null; then sed -i "s|^$1=.*|$1=$2|" "$CONF"
+  else printf '%s=%s\n' "$1" "$2" >> "$CONF"; fi
+}
+
+_kread()  { kreadconfig5 --file "$1" --group "$2" --key "$3" 2>/dev/null; }
+_kwrite() { kwriteconfig5 --file "$1" --group "$2" --key "$3" "$4" 2>/dev/null; }
+
+_cur_scheme()  { _kread kdeglobals General ColorScheme; }
+_cur_lnf()     { _kread kdeglobals KDE LookAndFeelPackage; }
+_cur_icons()   { _kread kdeglobals Icons Theme; }
+_plasma_theme(){ _kread plasmarc Theme name; }
+_in_session()  { [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] && pgrep -x plasmashell >/dev/null 2>&1; }
+
+# mode -> colour-scheme id
+_scheme_for() {
+  case "$1" in
+    dark)          echo ChakraDark ;;
+    light)         echo ChakraLight ;;
+    high-contrast) echo ChakraHighContrast ;;
+    fluent)        echo FluentDark ;;
+    *)             echo "" ;;
+  esac
+}
+
+_auto_resolve() {  # -> dark | light, from the clock and shell.conf
+  local now light dark
+  now="$(date +%H%M)"
+  light="$(_conf_get AUTO_LIGHT)"; light="${light:-07:00}"; light="${light/:/}"
+  dark="$(_conf_get AUTO_DARK)";   dark="${dark:-19:00}";   dark="${dark/:/}"
+  if (( 10#$now >= 10#$light && 10#$now < 10#$dark )); then echo light; else echo dark; fi
+}
+
+_apply_scheme() {  # colour-scheme id
+  local id="$1"
+  [[ -n "$id" ]] || return 1
+  if _in_session && have plasma-apply-colorscheme; then
+    plasma-apply-colorscheme "$id" >/dev/null 2>&1
+  fi
+  # Always persist to config so a snapshot / next login keeps it.
+  _kwrite kdeglobals General ColorScheme "$id"
+  # Match the Plasma panel/desktop theme to the scheme.
+  local ptheme
+  case "$id" in
+    ChakraHighContrast) ptheme=breeze-dark ;;
+    ChakraLight)        ptheme=breeze-light ;;
+    *)                  ptheme=Fluent-round-dark ;;   # Phase 3 default
+  esac
+  _kwrite plasmarc Theme name "$ptheme"
+  if _in_session && have plasma-apply-desktoptheme; then
+    plasma-apply-desktoptheme "$ptheme" >/dev/null 2>&1 || true
+  fi
+}
+
+# ------------------------------------------------------------- auto timer
+
+_auto_unit() {
+  mkdir -p "$UNIT_DIR"
+  cat > "$UNIT_DIR/chakra-shell-auto.service" <<'EOF'
+[Unit]
+Description=Chakra Shell -- apply the day/night colour scheme
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/chakra-shell _auto-tick
+EOF
+  cat > "$UNIT_DIR/chakra-shell-auto.timer" <<'EOF'
+[Unit]
+Description=Chakra Shell -- day/night colour scheme, every 15 min
+
+[Timer]
+OnActiveSec=30s
+OnUnitActiveSec=15min
+Persistent=false
+
+[Install]
+WantedBy=timers.target
+EOF
+}
+
+_auto_on() {
+  _conf_set THEME_MODE auto
+  [[ -n "$(_conf_get AUTO_LIGHT)" ]] || _conf_set AUTO_LIGHT 07:00
+  [[ -n "$(_conf_get AUTO_DARK)" ]]  || _conf_set AUTO_DARK 19:00
+  _auto_unit
+  if have systemctl; then
+    systemctl --user daemon-reload 2>/dev/null
+    systemctl --user enable --now chakra-shell-auto.timer 2>/dev/null \
+      || { echo "note: couldn't enable the user timer; applying once now." >&2; }
+  fi
+  _apply_scheme "$(_scheme_for "$(_auto_resolve)")"
+  echo "Auto light/dark is on (light $(_conf_get AUTO_LIGHT), dark $(_conf_get AUTO_DARK))."
+  echo "Now: $(_auto_resolve)."
+  _audit "shell.theme" "auto" "on"
+}
+
+_auto_off() {
+  have systemctl && systemctl --user disable --now chakra-shell-auto.timer 2>/dev/null
+  local keep; keep="$(_auto_resolve)"
+  _conf_set THEME_MODE "$keep"
+  echo "Auto switching off -- staying on $keep."
+  _audit "shell.theme" "auto" "off"
+}
+
+# --------------------------------------------------------------- actions
+
+do_theme() {
+  local mode="${1:-}"
+  if [[ -z "$mode" ]]; then
+    echo "Current: $(_conf_get THEME_MODE || echo "(unset)")   scheme: $(_cur_scheme)"
+    echo "Modes:   dark  light  high-contrast  auto  fluent"
+    return 0
+  fi
+  local id; id="$(_scheme_for "$mode")"
+  case "$mode" in
+    auto)   _auto_on; return $? ;;
+    dark|light|high-contrast|fluent)
+      [[ "$(_conf_get THEME_MODE)" == auto ]] && have systemctl && \
+        systemctl --user disable --now chakra-shell-auto.timer 2>/dev/null
+      _apply_scheme "$id"
+      _conf_set THEME_MODE "$mode"
+      if [[ "$mode" == fluent ]]; then
+        echo "Restored the Windows 11-style Fluent look (colour scheme only)."
+      else
+        echo "Theme: Chakra $mode  ($id)."
+      fi
+      _in_session || echo "(no live Plasma session -- written to config, applies on next login)"
+      _audit "shell.theme" "$mode" "$id" ;;
+    *) echo "unknown mode '$mode' -- dark|light|high-contrast|auto|fluent" >&2; exit 1 ;;
+  esac
+}
+
+do_layout() {
+  case "${1:-}" in
+    reset)
+      local lnf; lnf="$(_cur_lnf)"; lnf="${lnf:-$FLUENT_LNF}"
+      echo "This rebuilds the panel(s) from the '$lnf' template and drops"
+      echo "any manual panel changes in this session."
+      read -r -p "Proceed? [y/N] " a; [[ "$a" == [yY] ]] || { echo "cancelled."; exit 0; }
+      if _in_session && have plasma-apply-lookandfeel; then
+        plasma-apply-lookandfeel --resetLayout -a "$lnf" >/dev/null 2>&1 \
+          && echo "Panel reset. Log out/in if anything looks half-applied." \
+          || echo "plasma-apply-lookandfeel failed (is this a Plasma session?)." >&2
+      else
+        echo "Not in a Plasma session -- nothing to reset live." >&2; exit 1
+      fi
+      _audit "shell.layout" "$lnf" "reset" ;;
+    *) echo "usage: chakra-shell layout reset" >&2; exit 1 ;;
+  esac
+}
+
+_auto_timer_state() {
+  have systemctl || { echo "n/a"; return; }
+  systemctl --user is-active chakra-shell-auto.timer 2>/dev/null | grep -q active && echo active || echo inactive
+}
+
+status_json() {
+  jq -n \
+    --arg mode "$(_conf_get THEME_MODE)" \
+    --arg scheme "$(_cur_scheme)" \
+    --arg lookandfeel "$(_cur_lnf)" \
+    --arg plasma_theme "$(_plasma_theme)" \
+    --arg icons "$(_cur_icons)" \
+    --arg auto_timer "$(_auto_timer_state)" \
+    --arg auto_now "$([[ "$(_conf_get THEME_MODE)" == auto ]] && _auto_resolve || echo "")" \
+    --argjson session "$(_in_session && echo true || echo false)" \
+    '{theme_mode:(if $mode=="" then null else $mode end),
+      color_scheme:$scheme, look_and_feel:$lookandfeel,
+      plasma_theme:$plasma_theme, icon_theme:$icons,
+      auto:{timer:$auto_timer, resolves_to:(if $auto_now=="" then null else $auto_now end)},
+      plasma_session:$session,
+      custom_widgets:"deferred -- stock Plasma launcher/dock/panel/notifications"}'
+}
+
+status_human() {
+  local mode; mode="$(_conf_get THEME_MODE)"
+  echo "Chakra Shell"
+  echo "============"
+  echo
+  echo "Theme mode:        ${mode:-unset (scheme: $(_cur_scheme))}"
+  echo "Colour scheme:     $(_cur_scheme)"
+  echo "Look and feel:     $(_cur_lnf)"
+  echo "Plasma theme:      $(_plasma_theme)"
+  echo "Icon theme:        $(_cur_icons)"
+  if [[ "$mode" == auto ]]; then
+    echo "Auto switching:    $(_auto_timer_state)  (now: $(_auto_resolve); light $(_conf_get AUTO_LIGHT), dark $(_conf_get AUTO_DARK))"
+  fi
+  echo
+  echo "Shell components:  stock Plasma -- launcher, dock, panel, notifications."
+  echo "                  Fully custom Chakra widgets are a separate Qt/QML"
+  echo "                  project; see desktop/launcher/README.md. Everything"
+  echo "                  here is themed and switchable, which is what Phase 16"
+  echo "                  delivers now."
+  echo
+  echo "Switch:  chakra-shell theme dark|light|high-contrast|auto|fluent"
+  _in_session || echo "(no live Plasma session detected -- changes write to config only)"
+}
+
+# -------------------------------------------------------------- dispatch
+
+json=0; [[ "${1:-}" == "--json" ]] && { json=1; shift; }
+cmd="${1:-status}"; shift || true
+
+case "$cmd" in
+  status|"")  if [[ $json -eq 1 ]]; then status_json; else status_human; fi ;;
+  theme)      do_theme "${1:-}" ;;
+  auto)       if [[ "${1:-}" == off ]]; then _auto_off; else _auto_on; fi ;;
+  layout)     do_layout "${1:-}" ;;
+  _auto-tick) _apply_scheme "$(_scheme_for "$(_auto_resolve)")" ;;   # timer entry point
+  -h|--help)  sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "usage: chakra-shell {status|theme MODE|auto [off]|layout reset}" >&2; exit 1 ;;
+esac
+exit 0

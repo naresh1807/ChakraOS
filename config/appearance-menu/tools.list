@@ -1,0 +1,3 @@
+# Chakra Appearance menu (Phase 16).
+# Name|category_id|exec command|needs_root(0/1)
+Chakra Shell|Appearance|chakra-shell|0

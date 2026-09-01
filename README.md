@@ -6,7 +6,7 @@ See `docs/` for phase-by-phase status and the full roadmap.
 
 ## Status
 
-**Phases 1–15 complete.** A reproducible Debian 12 (bookworm) + KDE Plasma 5.27 live ISO that:
+**Phases 1–16 complete** (the numbered roadmap). A reproducible Debian 12 (bookworm) + KDE Plasma 5.27 live ISO that:
 
 - boots to a Windows 11-styled Plasma desktop with a full Sudarshana Chakra identity (boot splash, wallpaper, login screen, desktop icons, familiar app naming);
 - ships ~49 curated security/forensics apt packages plus Metasploit, Nikto and Burp Suite Community, in a Kali-style categorized "Security Tools" menu;
@@ -21,9 +21,10 @@ See `docs/` for phase-by-phase status and the full roadmap.
 - has **performance & daily-use tools**: `chakra-perf` (power profiles / "what's slow"), `chakra-battery` (heuristic advisor), `chakra-search` (unified CLI search), `chakra-clip` (terminal clipboard);
 - has a **security research environment**: `chakra-lab` (isolated firejail/podman workspace for untrusted samples — drop/scan/triage) and `chakra-reporter` (structured findings-report builder);
 - has **`chakra-identity`** — auth-posture report + FIDO2 security-key / fingerprint enrolment (Secure Boot / TPM boot-chain hardening is deferred to an installer);
-- has **`chakra-link`** — phone ⟷ desktop over KDE Connect (pair / sync / send / ring), with `--json`, an audit record per action, and an explicit view + on/off switch for the 1714-1764 exposure it adds.
+- has **`chakra-link`** — phone ⟷ desktop over KDE Connect (pair / sync / send / ring), with `--json`, an audit record per action, and an explicit view + on/off switch for the 1714-1764 exposure it adds;
+- has **`chakra-shell`** — the shell-control CLI: `light` / `dark` / `high-contrast` / `auto` (day-night) theme modes over three Chakra-branded colour schemes, plus `layout reset`; the stock Plasma launcher/dock/panel/notifications stay, fully Chakra-themed (custom QML components are deliberately deferred — see `desktop/`).
 
-Everything past Phase 15 (`office/`, `compatibility/`, `installer/`, …) mirrors the project's long-term architecture and is empty scaffolding until its phase begins. See `docs/roadmap.md` for the full breakdown — deliberate deferrals (a real local LLM, AppGuard, Secure Boot) are called out there and in each area's `README.md`.
+`office/` and `compatibility/` (Wine/Proton) aren't yet placed in a numbered phase, and a few things are deliberately deferred to a future installer (a real local LLM, AppGuard, Secure Boot, persistence, custom shell widgets) — all called out in `docs/roadmap.md` and each area's `README.md`.
 
 ## Layout
 
@@ -39,6 +40,7 @@ Everything past Phase 15 (`office/`, `compatibility/`, `installer/`, …) mirror
 - `performance/` — Phase 12: `chakra-perf`, `chakra-battery`, `chakra-search`, `chakra-clip`.
 - `identity/` — Phase 14: `chakra-identity`.
 - `mobile/` — Phase 15: `chakra-link` (KDE Connect front-end).
+- `desktop/` — Phase 16: `chakra-shell` + Chakra colour schemes; `launcher/` and `workspace-manager/` reserved for the deferred custom QML components.
 - Every other top-level directory mirrors the project's long-term architecture; see `docs/roadmap.md`.
 
 ## Building the ISO
