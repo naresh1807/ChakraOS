@@ -4,6 +4,20 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Dates ar
 
 ## [Unreleased]
 
+## 2026-09-02 — Phase 17: Windows compatibility
+
+### Added
+- `chakra-compat` — a Chakra front-end over Wine (64-bit; `wine` + `wine64` from bookworm):
+  - `run FILE.exe [args]` — firejail sandbox (`--net=none`, `--caps.drop=all`, `--nonewprivs`) in a prefix under `~/.local/share/chakra/wine/`. `--online` allows network; `--prefix NAME` selects/creates a prefix.
+  - `analyze FILE.exe` — fresh throwaway prefix, offline, 60 s cap, then a report: SHA-256, files created under `C:\`, registry Run/Winlogon/Services sections touched. Points at `chakra-lab` (Phase 13) for the deep dive.
+  - `prefix new | list | rm [NAME]`, `winetricks ARGS` (passthrough to the default prefix), `status` / `--json`.
+- Every state-changing action → Chakra Audit trail (`actor=chakra-compat`, risk tier 1–2).
+- `install_winetricks()` in `build_iso.sh` fetches the upstream winetricks script (not in bookworm); `apply_compat()` installs the tool + a new **Compatibility** menu section. Packages: `wine`, `wine64`.
+
+### Design / deferred
+- The difference from bare `wine foo.exe`: that hands a Windows binary your network and your `$HOME`. `chakra-compat run` drops both by default; `analyze` also gives it a private, disposable filesystem.
+- Deferred: 32-bit Windows apps (`wine32:i386` — a documented opt-in in `compatibility/wine/README.md`, not bundled), Proton / Steam / gaming (`compatibility/proton/` reserved — Steam isn't in Debian main), Bottles / Lutris GUIs, a full fake-internet detonation sandbox (same call as Phase 13).
+
 ## 2026-09-01 — Phase 16: Chakra Shell
 
 ### Added

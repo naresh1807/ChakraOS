@@ -33,11 +33,14 @@ Phases are ordered by dependency, not just topic — each phase only depends on 
 
 - **Phase 16 — Chakra Shell.** `chakra-shell` — the desktop-shell control CLI: `theme dark|light|high-contrast|auto|fluent` (applies live via `plasma-apply-colorscheme` + persists to `kdeglobals`; `auto` installs a `systemd --user` timer that flips light↔dark by the clock), `layout reset` (rebuild the Chakra panel), `status` / `--json`. Ships three Chakra-branded KColorScheme files (`ChakraDark`, `ChakraLight`, `ChakraHighContrast` — orange-on-blue) into `/usr/share/color-schemes/`; the Phase 3 boot default (Fluent-round-dark / FluentDark) is untouched, and `theme fluent` restores it. New **Appearance** menu. **Deferred** (the honest call, as with Phase 8's AppGuard): rebuilding the launcher / dock / panel / notification centre as fully-custom Chakra QML components — each is a standalone Qt/QML plasmoid project, and Plasma's are mature (multi-monitor, activities, accessibility, notification history); a partial replacement would be a downgrade. Stock Plasma stays, fully Chakra-themed and switchable. → `desktop/`
 
+- **Phase 17 — Windows compatibility.** `chakra-compat` — a Chakra front-end over **Wine** (64-bit; `wine` / `wine64` from bookworm): `run FILE.exe` boxes the program in a firejail sandbox (`--net=none`, `--caps.drop=all`, `--nonewprivs`) in a prefix under `~/.local/share/chakra/wine/` — `--online` to allow net, `--prefix NAME` to pick one; `analyze FILE.exe` runs it offline in a throwaway prefix with a 60 s cap and reports SHA-256 + files created + registry Run/Winlogon/Services sections touched (hands off to `chakra-lab`); `prefix new|list|rm`; `winetricks` passthrough (upstream script, fetched — not in bookworm); `status` / `--json`. Every action → Chakra Audit. New **Compatibility** menu. Packages: `wine`, `wine64`. **Deferred**: 32-bit Windows apps (`wine32:i386` — documented opt-in, not bundled; ~doubles the footprint), Proton / Steam / gaming (`compatibility/proton/` stays reserved — Steam isn't in Debian main), Bottles / Lutris, a full inetsim-style detonation sandbox (same deferral as Phase 13). → `compatibility/`
+
 ## In progress
 
-*(nothing active — the numbered roadmap is complete through Phase 16.)*
+*(nothing active — Phases 1–17 done.)*
 
 ## Directories reserved but not yet active
 
 - `desktop/launcher/`, `desktop/workspace-manager/` — the from-scratch QML shell components deferred in Phase 16; each has a README on what that entails.
-- `office/`, `compatibility/` (Wine/Proton) — not yet placed in a phase; scope to be defined when reached.
+- `compatibility/proton/` — Proton / Steam gaming, deferred in Phase 17.
+- `office/` — an office suite (LibreOffice is in the repos; Chakra defaults / branding TBD) — not yet placed in a phase.

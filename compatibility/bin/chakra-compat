@@ -1,0 +1,221 @@
+#!/bin/bash
+# chakra-compat -- run Windows programs on Chakra, boxed by default.
+#
+# Wine (64-bit) is the compatibility layer. This wraps it so an unknown
+# .exe runs contained: a firejail sandbox with no network and dropped
+# capabilities, in a Wine prefix under ~/.local/share/chakra/wine/. That
+# is the difference from bare `wine foo.exe`, which lets a Windows
+# program reach the network and read $HOME like any native app.
+#
+# `analyze` goes further -- a fresh throwaway prefix, offline, time-boxed,
+# then a report of what the sample wrote -- for Windows files you don't
+# trust. For anything serious, hand the sample to `chakra-lab` (Phase 13).
+#
+# 32-bit Windows apps need i386 multiarch (not enabled; it roughly
+# doubles the Wine footprint) -- see compatibility/wine/README.md. Steam
+# / Proton gaming is out of scope (compatibility/proton/ is reserved).
+#
+# Usage:
+#   chakra-compat                          status
+#   chakra-compat --json
+#   chakra-compat run FILE.exe [args...]   boxed run
+#       --online          allow network access
+#       --prefix NAME     use / create prefix NAME (default: "default")
+#   chakra-compat analyze FILE.exe         offline run + change report
+#   chakra-compat prefix new|list|rm [NAME]
+#   chakra-compat winetricks ARGS...       winetricks against the prefix
+set -u
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+# Debian's wine wrapper nags on every call when the (unbundled) 32-bit
+# side is absent; -all silences that. A user who wants wine debug output
+# sets their own WINEDEBUG.
+: "${WINEDEBUG:=-all}"; export WINEDEBUG
+
+WINE_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/chakra/wine"
+have() { command -v "$1" >/dev/null 2>&1; }
+
+_audit() {  # action target result [tier]
+  have chakra-audit-log || return 0
+  chakra-audit-log --actor chakra-compat --action "$1" --target "$2" \
+    --risk-tier "${4:-1}" --approved-by "user (direct invocation)" --result "$3" 2>/dev/null || true
+}
+
+_wine_ver()  { wine --version 2>/dev/null | sed 's/^wine-//'; }
+_wt_ver()    { have winetricks && winetricks --version 2>/dev/null | awk '{print $1; exit}'; }
+_is_pe32()   { file -b "$1" 2>/dev/null | grep -q 'PE32 executable' && ! file -b "$1" 2>/dev/null | grep -q 'PE32+'; }
+_pfx_path()  { echo "$WINE_ROOT/${1:-default}"; }
+_pfx_list()  { [[ -d "$WINE_ROOT" ]] && find "$WINE_ROOT" -maxdepth 1 -mindepth 1 -type d -printf '%f\n' 2>/dev/null | sort || true; }
+
+_ensure_wine() {
+  have wine || { echo "wine is not installed (package: wine / wine64)." >&2; exit 1; }
+}
+
+_ensure_prefix() {  # path
+  local p="$1"
+  if [[ ! -d "$p/drive_c" ]]; then
+    mkdir -p "$p"
+    echo "Initialising Wine prefix $p ..." >&2
+    WINEPREFIX="$p" WINEARCH=win64 WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -i >/dev/null 2>&1 \
+      || { echo "wineboot failed (needs a display; run this from the desktop)." >&2; return 1; }
+  fi
+}
+
+# ------------------------------------------------------------------- run
+
+do_run() {
+  _ensure_wine
+  local online=0 pfx_name=default
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --online) online=1; shift ;;
+      --prefix) pfx_name="${2:?--prefix needs a name}"; shift 2 ;;
+      *) break ;;
+    esac
+  done
+  local exe="${1:-}"; [[ -n "$exe" ]] || { echo "usage: chakra-compat run FILE.exe [args]" >&2; exit 1; }
+  [[ -f "$exe" ]] || { echo "no such file: $exe" >&2; exit 1; }
+  shift
+  exe="$(readlink -f "$exe")"
+  if _is_pe32 "$exe"; then
+    echo "'$(basename "$exe")' is a 32-bit Windows program. This build ships 64-bit" >&2
+    echo "Wine only. Add 32-bit support (not persisted):" >&2
+    echo "  sudo dpkg --add-architecture i386 && sudo apt update && sudo apt install wine32:i386" >&2
+    echo "See compatibility/wine/README.md. Continuing -- it will likely fail." >&2
+  fi
+  local pfx; pfx="$(_pfx_path "$pfx_name")"
+  _ensure_prefix "$pfx" || exit 1
+
+  local fj=(firejail --quiet --caps.drop=all --nonewprivs --noprofile)
+  have firejail || { fj=(); echo "note: firejail missing -- running unsandboxed." >&2; }
+  [[ $online -eq 0 && ${#fj[@]} -gt 0 ]] && fj+=(--net=none)
+
+  echo "Running $(basename "$exe")  [prefix: $pfx_name, network: $([[ $online -eq 1 ]] && echo on || echo OFF)]"
+  _audit "compat.run" "$(basename "$exe")" "prefix=$pfx_name net=$([[ $online -eq 1 ]] && echo on || echo off)" 1
+  WINEPREFIX="$pfx" WINEARCH=win64 "${fj[@]}" wine "$exe" "$@"
+}
+
+# --------------------------------------------------------------- analyze
+
+do_analyze() {
+  _ensure_wine
+  local exe="${1:-}"; [[ -n "$exe" && -f "$exe" ]] || { echo "usage: chakra-compat analyze FILE.exe" >&2; exit 1; }
+  exe="$(readlink -f "$exe")"
+  local sha; sha="$(sha256sum "$exe" | cut -d' ' -f1)"
+  local box; box="$(mktemp -d "${TMPDIR:-/tmp}/chakra-compat.XXXXXX")"
+  local pfx="$box/pfx"
+
+  echo "Sample:   $(basename "$exe")"
+  echo "SHA-256:  $sha"
+  echo "Sandbox:  $box   (offline, 60s limit)"
+  echo
+
+  WINEPREFIX="$pfx" WINEARCH=win64 WINEDLLOVERRIDES="mscoree,mshtml=" wineboot -i >/dev/null 2>&1
+  local snap="$box/before.list"
+  find "$pfx/drive_c" -type f 2>/dev/null | sort > "$snap"
+
+  local fj=(firejail --quiet --caps.drop=all --nonewprivs --noprofile --net=none --private-tmp)
+  have firejail || fj=()
+  WINEPREFIX="$pfx" WINEARCH=win64 "${fj[@]}" timeout 60 wine "$exe" >/dev/null 2>&1
+  local rc=$?
+  [[ $rc -eq 124 ]] && echo "(hit the 60s limit -- still running when killed)"
+
+  echo
+  echo "Files it created under C:\\ :"
+  comm -13 "$snap" <(find "$pfx/drive_c" -type f 2>/dev/null | sort) \
+    | sed "s#$pfx/drive_c#  C:#; s#/#\\\\#g" | head -40
+  local nnew; nnew="$(comm -13 "$snap" <(find "$pfx/drive_c" -type f 2>/dev/null | sort) | wc -l)"
+  [[ "$nnew" -gt 40 ]] && echo "  ... and $((nnew - 40)) more"
+
+  echo
+  echo "Registry sections with persistence relevance:"
+  local reghits
+  reghits="$(grep -hnE '\[.*(CurrentVersion\\\\Run|Winlogon|\\\\Services\\\\)' "$pfx"/system.reg "$pfx"/user.reg 2>/dev/null | sed 's/^/  /' | head -20)"
+  if [[ -n "$reghits" ]]; then echo "$reghits"; else echo "  none flagged (full prefix registry at $pfx/*.reg)"; fi
+
+  echo
+  echo "Next: chakra-lab new <case>; chakra-lab drop <case> $exe; chakra-lab scan <case>"
+  echo "Sandbox kept at $box -- 'rm -rf' it when done."
+  _audit "compat.analyze" "$sha" "new_files=$nnew rc=$rc" 2
+}
+
+# ---------------------------------------------------------------- prefix
+
+do_prefix() {
+  case "${1:-list}" in
+    list|"")
+      if [[ -z "$(_pfx_list)" ]]; then echo "no Chakra Wine prefixes yet."; else
+        echo "Chakra Wine prefixes ($WINE_ROOT):"; _pfx_list | sed 's/^/  /'; fi ;;
+    new)
+      local n="${2:?chakra-compat prefix new NAME}"
+      _ensure_wine; _ensure_prefix "$(_pfx_path "$n")" && echo "prefix '$n' ready."
+      _audit "compat.prefix" "$n" "new" 1 ;;
+    rm)
+      local n="${2:?chakra-compat prefix rm NAME}" p; p="$(_pfx_path "$n")"
+      [[ -d "$p" ]] || { echo "no such prefix: $n" >&2; exit 1; }
+      read -r -p "delete prefix '$n' ($p)? [y/N] " a; [[ "$a" == [yY] ]] || { echo cancelled.; exit 0; }
+      rm -rf "$p" && echo "removed."
+      _audit "compat.prefix" "$n" "removed" 1 ;;
+    *) echo "usage: chakra-compat prefix new|list|rm [NAME]" >&2; exit 1 ;;
+  esac
+}
+
+# ------------------------------------------------------------------ misc
+
+do_winetricks() {
+  have winetricks || { echo "winetricks isn't installed." >&2; exit 1; }
+  local pfx; pfx="$(_pfx_path default)"
+  _ensure_wine; _ensure_prefix "$pfx" || exit 1
+  WINEPREFIX="$pfx" WINEARCH=win64 winetricks "$@"
+  _audit "compat.winetricks" "${*:-menu}" "ran" 1
+}
+
+status_json() {
+  local pl="[]" p
+  while IFS= read -r p; do [[ -n "$p" ]] && pl="$(jq -c --arg n "$p" '. + [$n]' <<<"$pl")"; done < <(_pfx_list)
+  jq -n --arg wine "$(_wine_ver)" --arg wt "$(_wt_ver)" \
+    --argjson firejail "$(have firejail && echo true || echo false)" \
+    --argjson prefixes "$pl" \
+    '{wine_version:($wine // null), wine_arch:"win64",
+      winetricks:($wt // null), firejail:$firejail,
+      prefix_root:"~/.local/share/chakra/wine", prefixes:$prefixes,
+      note:"32-bit Windows apps need i386 multiarch (not enabled)"}'
+}
+
+status_human() {
+  echo "Chakra Compatibility"
+  echo "===================="
+  echo
+  if have wine; then
+    echo "Wine:             $(_wine_ver)   (64-bit only -- 32-bit: see compatibility/wine/README.md)"
+  else
+    echo "Wine:             not installed  (package: wine / wine64)"
+  fi
+  local wt; wt="$(_wt_ver)"
+  echo "winetricks:       ${wt:-not installed}"
+  echo "Sandbox:          $(have firejail && echo 'firejail present' || echo 'firejail MISSING -- runs are unsandboxed')"
+  echo
+  echo "Prefixes ($WINE_ROOT):"
+  if [[ -z "$(_pfx_list)" ]]; then echo "  none yet -- created on first 'run' or 'prefix new'"; else
+    _pfx_list | sed 's/^/  /'; fi
+  echo
+  echo "  run   -- boxed (no network, caps dropped) by default; --online to allow net"
+  echo "  analyze -- offline throwaway prefix + a change report, for untrusted .exe"
+  echo "  32-bit Windows apps: see compatibility/wine/README.md"
+}
+
+# --------------------------------------------------------------- dispatch
+
+json=0; [[ "${1:-}" == "--json" ]] && { json=1; shift; }
+cmd="${1:-status}"; shift || true
+
+case "$cmd" in
+  status|"")    if [[ $json -eq 1 ]]; then status_json; else status_human; fi ;;
+  run)          do_run "$@" ;;
+  analyze)      do_analyze "$@" ;;
+  prefix)       do_prefix "$@" ;;
+  winetricks|wt) do_winetricks "$@" ;;
+  -h|--help)    sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "usage: chakra-compat {status|run|analyze|prefix|winetricks}" >&2; exit 1 ;;
+esac
+exit 0

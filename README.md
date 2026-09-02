@@ -6,7 +6,7 @@ See `docs/` for phase-by-phase status and the full roadmap.
 
 ## Status
 
-**Phases 1–16 complete** (the numbered roadmap). A reproducible Debian 12 (bookworm) + KDE Plasma 5.27 live ISO that:
+**Phases 1–17 complete** (the roadmap through Windows compatibility). A reproducible Debian 12 (bookworm) + KDE Plasma 5.27 live ISO that:
 
 - boots to a Windows 11-styled Plasma desktop with a full Sudarshana Chakra identity (boot splash, wallpaper, login screen, desktop icons, familiar app naming);
 - ships ~49 curated security/forensics apt packages plus Metasploit, Nikto and Burp Suite Community, in a Kali-style categorized "Security Tools" menu;
@@ -22,9 +22,10 @@ See `docs/` for phase-by-phase status and the full roadmap.
 - has a **security research environment**: `chakra-lab` (isolated firejail/podman workspace for untrusted samples — drop/scan/triage) and `chakra-reporter` (structured findings-report builder);
 - has **`chakra-identity`** — auth-posture report + FIDO2 security-key / fingerprint enrolment (Secure Boot / TPM boot-chain hardening is deferred to an installer);
 - has **`chakra-link`** — phone ⟷ desktop over KDE Connect (pair / sync / send / ring), with `--json`, an audit record per action, and an explicit view + on/off switch for the 1714-1764 exposure it adds;
-- has **`chakra-shell`** — the shell-control CLI: `light` / `dark` / `high-contrast` / `auto` (day-night) theme modes over three Chakra-branded colour schemes, plus `layout reset`; the stock Plasma launcher/dock/panel/notifications stay, fully Chakra-themed (custom QML components are deliberately deferred — see `desktop/`).
+- has **`chakra-shell`** — the shell-control CLI: `light` / `dark` / `high-contrast` / `auto` (day-night) theme modes over three Chakra-branded colour schemes, plus `layout reset`; the stock Plasma launcher/dock/panel/notifications stay, fully Chakra-themed (custom QML components are deliberately deferred — see `desktop/`);
+- has **`chakra-compat`** — run Windows `.exe` files on Wine (64-bit), boxed in a no-network firejail sandbox by default, with an `analyze` mode (offline throwaway prefix + change report) for untrusted Windows samples that pairs with `chakra-lab`.
 
-`office/` and `compatibility/` (Wine/Proton) aren't yet placed in a numbered phase, and a few things are deliberately deferred to a future installer (a real local LLM, AppGuard, Secure Boot, persistence, custom shell widgets) — all called out in `docs/roadmap.md` and each area's `README.md`.
+`office/` (an office suite) and `compatibility/proton/` (Steam/Proton gaming) aren't yet placed in a phase, and a few things are deliberately deferred to a future installer (a real local LLM, AppGuard, Secure Boot, persistence, custom shell widgets, 32-bit Wine) — all called out in `docs/roadmap.md` and each area's `README.md`.
 
 ## Layout
 
@@ -41,6 +42,7 @@ See `docs/` for phase-by-phase status and the full roadmap.
 - `identity/` — Phase 14: `chakra-identity`.
 - `mobile/` — Phase 15: `chakra-link` (KDE Connect front-end).
 - `desktop/` — Phase 16: `chakra-shell` + Chakra colour schemes; `launcher/` and `workspace-manager/` reserved for the deferred custom QML components.
+- `compatibility/` — Phase 17: `chakra-compat` (Wine front-end); `proton/` reserved for gaming.
 - Every other top-level directory mirrors the project's long-term architecture; see `docs/roadmap.md`.
 
 ## Building the ISO

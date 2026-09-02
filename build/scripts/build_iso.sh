@@ -1217,6 +1217,62 @@ EOF
   done < "$menu_cfg/tools.list"
 }
 
+install_winetricks() {
+  # Not in Debian bookworm -- upstream ships a single self-contained
+  # script (same situation as Nikto). Best-effort, non-fatal.
+  if [[ "$CLEAN" -eq 0 && -x "$ROOTFS/usr/local/bin/winetricks" ]]; then
+    log "winetricks already present in rootfs -- skipping (use --clean to refresh)."
+    return 0
+  fi
+  log "Fetching winetricks (not in Debian repos)..."
+  chroot "$ROOTFS" bash -c '
+    curl -fsSL --connect-timeout 15 --max-time 120 \
+      https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks \
+      -o /usr/local/bin/winetricks && chmod +x /usr/local/bin/winetricks
+  ' || { log "WARNING: winetricks fetch failed (network?) -- continuing without it."; return 0; }
+}
+
+apply_compat() {
+  log "Installing Chakra Compatibility (Phase 17: chakra-compat over Wine)..."
+  local menu_cfg="$PROJECT_ROOT/config/compat-menu"
+  local apps_dir="$ROOTFS/usr/share/applications"
+  local dirs_dir="$ROOTFS/usr/share/desktop-directories"
+  local merged_dir="$ROOTFS/etc/xdg/menus/applications-merged"
+  local bin_dir="$ROOTFS/usr/lib/chakra/bin"
+  mkdir -p "$apps_dir" "$dirs_dir" "$merged_dir" "$bin_dir"
+
+  install_winetricks
+
+  cp "$PROJECT_ROOT/compatibility/bin/chakra-compat" "$bin_dir/chakra-compat"
+  chmod +x "$bin_dir/chakra-compat"
+  ln -sf /usr/lib/chakra/bin/chakra-compat "$ROOTFS/usr/local/bin/chakra-compat"
+
+  cp "$menu_cfg/chakra-compat.directory" "$dirs_dir/"
+  cp "$menu_cfg/chakra-compat.menu" "$merged_dir/"
+
+  # A fresh image ships with no Wine prefixes -- clear anything a chroot
+  # test dropped into a user home, and make sure i386 didn't sneak in.
+  rm -rf "$ROOTFS"/home/*/.local/share/chakra/wine "$ROOTFS"/home/*/.wine 2>/dev/null || true
+  chroot "$ROOTFS" dpkg --remove-architecture i386 2>/dev/null || true
+
+  local tname cat exec_cmd needs_root safe_id run_cmd
+  while IFS='|' read -r tname cat exec_cmd needs_root; do
+    [[ -z "$tname" || "$tname" == \#* ]] && continue
+    safe_id="$(echo "$tname" | tr -c 'a-zA-Z0-9' '-' | tr -s '-')"
+    run_cmd="$exec_cmd"
+    [[ "$needs_root" == "1" ]] && run_cmd="sudo $exec_cmd"
+    cat > "$apps_dir/chakra-tool-compat-$safe_id.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=$tname
+Icon=wine
+Exec=konsole -e bash -c "$run_cmd; echo; echo '--- press Enter to close ---'; read"
+Terminal=false
+Categories=X-Chakra-$cat;
+EOF
+  done < "$menu_cfg/tools.list"
+}
+
 build_squashfs() {
   log "Building squashfs from rootfs..."
   mkdir -p "$ISO_STAGE/live" "$ISO_STAGE/boot/grub"
@@ -1287,6 +1343,7 @@ main() {
   apply_research
   apply_mobile
   apply_shell
+  apply_compat
   cleanup_mounts
   build_squashfs
   stage_kernel_and_grub

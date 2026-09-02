@@ -97,6 +97,14 @@ fido2-tools
 # already in) reads its D-Bus state.
 kdeconnect
 
+# Phase 17: Windows compatibility. wine + wine64 = the 64-bit Wine stack
+# (bookworm 8.0); chakra-compat wraps it in a firejail box. 32-bit
+# (wine32:i386) is a documented opt-in, not bundled. winetricks isn't in
+# bookworm -- apply_compat() fetches the upstream script. firejail came
+# in with Phase 8.
+wine
+wine64
+
 # Audio foundation
 pipewire
 pipewire-pulse

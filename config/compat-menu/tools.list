@@ -1,0 +1,5 @@
+# Chakra Compatibility menu (Phase 17).
+# Name|category_id|exec command|needs_root(0/1)
+# (winecfg / winetricks stay reachable via `chakra-compat` and the shell;
+#  the menu keeps to the Chakra front-end, like the other Chakra menus.)
+Windows Compatibility|Compatibility|chakra-compat|0
