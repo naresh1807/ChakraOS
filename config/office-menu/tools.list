@@ -1,0 +1,6 @@
+# Chakra Office menu (Phase 18).
+# Name|category_id|exec command|needs_root(0/1)
+# (LibreOffice's own Writer / Calc / Impress launchers already appear in
+#  the desktop's Office group; this entry is the Chakra document-safety
+#  front-end.)
+Document Safety|Office|chakra-office|0

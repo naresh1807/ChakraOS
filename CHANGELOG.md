@@ -4,6 +4,23 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Dates ar
 
 ## [Unreleased]
 
+## 2026-09-02 — Phase 18: office & document safety
+
+### Added
+- **LibreOffice** (`libreoffice-writer` / `-calc` / `-impress` / `-gtk3`) as the office suite; its Writer / Calc / Impress launchers appear in the desktop's Office group. `hunspell-en-us` for spellcheck.
+- The build sets LibreOffice **macro security to High** (level 2 — macros disabled, prompt to enable per document) + `DisableActiveContent`, seeded into `/etc/skel` and the live user's `registrymodifications.xcu`.
+- `chakra-office` — the document-safety front-end:
+  - `open FILE [--trusted] [--app writer|calc|impress]` — read-only in a firejail `--net=none` box by default.
+  - `inspect FILE [--json]` — macros / auto-exec / suspicious keywords / OLE objects / external links, **without opening the file**: `oleid` + `olevba` for OLE and OOXML, `unzip` for the OOXML relationship graph.
+  - `scrub FILE [OUT]` — a copy with VBA (`*/vbaProject.bin`) and metadata (`exiftool -all=`) removed; legacy `.doc`/`.xls` converted to the modern format first.
+  - `status` / `--json` — LibreOffice version, macro-security level, oletools / firejail presence.
+- Every state-changing action → Chakra Audit trail (`actor=chakra-office`). New **Office** menu section.
+- `install_oletools()` in `build_iso.sh` builds an isolated venv at `/opt/chakra/venv/oletools` (olevba/oleid/mraptor aren't in Debian) and symlinks the entry points into `/usr/local/bin` — zero system-Python impact. Best-effort; `inspect` degrades to ZIP-level checks if the fetch fails. Packages: `python3-venv`, `zip`.
+
+### Design / deferred
+- Office documents are a leading malware-delivery vector — hence read-only-by-default open, inspect-before-you-trust, and a scrub path, mirroring Phase 17's `chakra-compat analyze` and Phase 13's `chakra-lab`.
+- Deferred: OnlyOffice / a further MS-Office-compatible alternative, a real DLP / quarantine layer, `scrub` for exotic embedded content (ActiveX, RTF objects).
+
 ## 2026-09-02 — Phase 17: Windows compatibility
 
 ### Added

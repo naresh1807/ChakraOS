@@ -1,0 +1,237 @@
+#!/bin/bash
+# chakra-office -- an office suite that treats every document as suspect.
+#
+# LibreOffice (Writer / Calc / Impress) is the suite. This wraps it so a
+# document you didn't create opens read-only with no network, and adds
+# `inspect` -- macro / OLE-object / external-link triage without opening
+# the file at all (oletools: oleid, olevba) -- and `scrub`, which writes
+# a macro- and metadata-free copy.
+#
+# Office documents are a leading malware-delivery vector, so the Chakra
+# default is High macro security (set in the build). `inspect` first for
+# anything you distrust, or hand it to `chakra-lab` (Phase 13).
+#
+# Usage:
+#   chakra-office                        status
+#   chakra-office --json
+#   chakra-office open FILE [--trusted] [--app writer|calc|impress]
+#   chakra-office inspect FILE [--json]  macro / OLE / link report
+#   chakra-office scrub FILE [OUT]       macro- & metadata-free copy
+set -u
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+SOFFICE="$(command -v soffice || command -v libreoffice || echo libreoffice)"
+have() { command -v "$1" >/dev/null 2>&1; }
+
+_audit() {  # action target result [tier]
+  have chakra-audit-log || return 0
+  chakra-audit-log --actor chakra-office --action "$1" --target "$2" \
+    --risk-tier "${4:-1}" --approved-by "user (direct invocation)" --result "$3" 2>/dev/null || true
+}
+
+_lo_ver() {
+  # read the version without cold-starting soffice (which takes ~15s on
+  # a fresh profile) -- from the package db (strip any epoch/revision)
+  local v
+  v="$(dpkg-query -Wf '${Version}' libreoffice-core 2>/dev/null \
+       || dpkg-query -Wf '${Version}' libreoffice-writer 2>/dev/null)"
+  grep -oE '[0-9]+\.[0-9]+\.[0-9]+' <<<"$v" | head -1
+}
+_macro_level() {  # 0 Low .. 3 Very High, from the user profile
+  local f="${XDG_CONFIG_HOME:-$HOME/.config}/libreoffice/4/user/registrymodifications.xcu"
+  [[ -f "$f" ]] || { echo "?"; return; }
+  grep -oE 'MacroSecurityLevel"[^<]*<value>[0-9]' "$f" 2>/dev/null | grep -oE '[0-9]$' | tail -1 || echo "?"
+}
+_macro_word() { case "$1" in 0) echo "Low";; 1) echo "Medium";; 2) echo "High";; 3) echo "Very High";; *) echo "default";; esac; }
+
+_is_ooxml() { case "${1,,}" in *.docx|*.xlsx|*.pptx|*.docm|*.xlsm|*.pptm) return 0;; *) return 1;; esac; }
+_is_ole()   { case "${1,,}" in *.doc|*.xls|*.ppt) return 0;; *) return 1;; esac; }
+_is_office_doc() {
+  _is_ooxml "$1" && return 0
+  _is_ole "$1" && return 0
+  case "${1,,}" in *.rtf|*.mht|*.xml) return 0;; esac
+  # extension-less or odd extension: sniff it
+  file -b "$1" 2>/dev/null | grep -qiE 'Composite Document|Microsoft (Word|Excel|PowerPoint|Office)|OpenXML|Rich Text Format'
+}
+
+# --------------------------------------------------------------------- open
+
+do_open() {
+  local trusted=0 app="" f=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --trusted) trusted=1; shift ;;
+      --app) app="${2:?}"; shift 2 ;;
+      *) f="$1"; shift ;;
+    esac
+  done
+  [[ -n "$f" && -f "$f" ]] || { echo "usage: chakra-office open FILE [--trusted] [--app writer|calc|impress]" >&2; exit 1; }
+  f="$(readlink -f "$f")"
+  local args=(--norestore)
+  [[ -n "$app" ]] && args+=("--$app")
+  local fj=()
+  if [[ $trusted -eq 0 ]]; then
+    args+=(--view)                                   # read-only
+    have firejail && fj=(firejail --quiet --net=none --caps.drop=all --nonewprivs --noprofile)
+    echo "Opening '$(basename "$f")' read-only, no network. Add --trusted for full edit."
+  else
+    echo "Opening '$(basename "$f")' with full trust."
+  fi
+  _audit "office.open" "$(basename "$f")" "trusted=$trusted" 1
+  "${fj[@]}" "$SOFFICE" "${args[@]}" "$f" &
+}
+
+# ------------------------------------------------------------------ inspect
+
+_inspect_collect() {  # file -> sets globals: HAS_MACRO AUTOEXEC SUSPICIOUS OLEOBJ EXTLINK VERDICT
+  local f="$1"
+  HAS_MACRO=no AUTOEXEC=no SUSPICIOUS="" OLEOBJ=0 EXTLINK=0 VERDICT="clean"
+
+  if have olevba && _is_office_doc "$f"; then
+    local j doc an
+    j="$(olevba --json "$f" 2>/dev/null)"
+    if [[ -n "$j" ]] && jq -e . >/dev/null 2>&1 <<<"$j"; then
+      doc="$(jq -c 'map(select(.type and .type != "MetaInformation")) | (.[0] // {})' <<<"$j")"
+      [[ "$(jq -r '(.macros // []) | length' <<<"$doc" 2>/dev/null)" -gt 0 ]] && HAS_MACRO=yes
+      an="$(jq -r '(.analysis // []) | .[]? | @tsv' <<<"$doc" 2>/dev/null)"
+      grep -qiE '^AutoExec($|\t)' <<<"$an" && AUTOEXEC=yes
+      SUSPICIOUS="$(grep -iE '^(Suspicious|IOC)($|\t)' <<<"$an" | cut -f2 | sort -u | paste -sd'; ' -)"
+    fi
+  fi
+
+  if _is_ooxml "$f" && have unzip; then
+    local listing rels
+    listing="$(unzip -l "$f" 2>/dev/null)"
+    OLEOBJ="$(grep -cE '/embeddings/|oleObject[0-9]' <<<"$listing")"
+    grep -qE 'vbaProject\.bin' <<<"$listing" && HAS_MACRO=yes
+    rels="$(unzip -p "$f" '*_rels/*.rels' 2>/dev/null)"
+    EXTLINK="$(grep -c 'TargetMode="External"' <<<"$rels")"
+  fi
+
+  [[ "$HAS_MACRO" == yes ]] && VERDICT="has macros -- do not enable unless you trust the source"
+  [[ "$AUTOEXEC" == yes ]] && VERDICT="AUTO-EXECUTING macros -- treat as hostile"
+}
+
+do_inspect() {
+  local json=0 f=""
+  for a in "$@"; do [[ "$a" == "--json" ]] && json=1 || f="$a"; done
+  [[ -n "$f" && -f "$f" ]] || { echo "usage: chakra-office inspect FILE [--json]" >&2; exit 1; }
+  f="$(readlink -f "$f")"
+  local sha; sha="$(sha256sum "$f" | cut -d' ' -f1)"
+  if ! _is_office_doc "$f"; then
+    if [[ $json -eq 1 ]]; then
+      jq -n --arg file "$(basename "$f")" --arg sha "$sha" \
+        '{file:$file, sha256:$sha, office_document:false, verdict:"not an office document"}'
+    else
+      echo "$(basename "$f") isn't an office document ($(file -b "$f" 2>/dev/null)) -- nothing to inspect."
+    fi
+    return 0
+  fi
+  local HAS_MACRO AUTOEXEC SUSPICIOUS OLEOBJ EXTLINK VERDICT
+  _inspect_collect "$f"
+  _audit "office.inspect" "$sha" "macros=$HAS_MACRO autoexec=$AUTOEXEC" 1
+
+  if [[ $json -eq 1 ]]; then
+    jq -n --arg file "$(basename "$f")" --arg sha "$sha" \
+      --arg macros "$HAS_MACRO" --arg autoexec "$AUTOEXEC" \
+      --arg suspicious "$SUSPICIOUS" --argjson ole "$OLEOBJ" --argjson ext "$EXTLINK" \
+      --arg verdict "$VERDICT" \
+      '{file:$file, sha256:$sha, has_macros:($macros=="yes"),
+        auto_executes:($autoexec=="yes"),
+        suspicious:(if $suspicious=="" then [] else ($suspicious/"; ") end),
+        ole_objects:$ole, external_links:$ext, verdict:$verdict}'
+    return
+  fi
+  echo "Document inspection -- $(basename "$f")"
+  echo "  SHA-256:        $sha"
+  echo "  VBA macros:     $HAS_MACRO"
+  echo "  Auto-execute:   $AUTOEXEC"
+  [[ -n "$SUSPICIOUS" ]] && echo "  Suspicious:     $SUSPICIOUS"
+  echo "  OLE objects:    $OLEOBJ"
+  echo "  External links: $EXTLINK"
+  echo
+  echo "  Verdict:        $VERDICT"
+  [[ "$HAS_MACRO" == yes ]] && echo "  -> chakra-office scrub '$f'   (or open it with chakra-lab)"
+  have olevba || echo "  (install oletools for deeper analysis -- see office/README.md)"
+}
+
+# -------------------------------------------------------------------- scrub
+
+do_scrub() {
+  local f="${1:-}"; [[ -n "$f" && -f "$f" ]] || { echo "usage: chakra-office scrub FILE [OUT]" >&2; exit 1; }
+  f="$(readlink -f "$f")"
+  _is_office_doc "$f" || { echo "$(basename "$f") isn't an office document -- nothing to scrub." >&2; exit 1; }
+  local out="${2:-${f%.*}.scrubbed.${f##*.}}"
+  local removed=()
+
+  if _is_ole "$f"; then
+    echo "'$(basename "$f")' is a legacy OLE document. Converting to the modern format first..."
+    local conv; conv="$(mktemp -d)/$(basename "${f%.*}").${f##*.}x"
+    "$SOFFICE" --headless --convert-to "${f##*.}x" --outdir "$(dirname "$conv")" "$f" >/dev/null 2>&1
+    [[ -f "$conv" ]] || { echo "conversion failed." >&2; exit 1; }
+    f="$conv"; out="${2:-${f%.*}.scrubbed.${f##*.}}"
+  fi
+
+  cp "$f" "$out"
+  if _is_ooxml "$out" && have zip; then
+    for m in word/vbaProject.bin xl/vbaProject.bin ppt/vbaProject.bin word/vbaData.xml; do
+      zip -q -d "$out" "$m" >/dev/null 2>&1 && removed+=("$m")
+    done
+  fi
+  if have exiftool; then
+    exiftool -overwrite_original -all= "$out" >/dev/null 2>&1 && removed+=("metadata")
+  fi
+
+  if [[ ${#removed[@]} -eq 0 ]]; then
+    echo "Nothing to remove -- '$(basename "$out")' is a copy with no macros or metadata found."
+  else
+    echo "Wrote $out"
+    echo "Removed: ${removed[*]}"
+  fi
+  _audit "office.scrub" "$(basename "$out")" "removed=${removed[*]:-none}" 1
+}
+
+# ------------------------------------------------------------------- status
+
+status_json() {
+  local ml; ml="$(_macro_level)"
+  jq -n --arg lo "$(_lo_ver)" --arg ml "$ml" --arg mlname "$(_macro_word "$ml")" \
+    --argjson oletools "$(have olevba && echo true || echo false)" \
+    --argjson firejail "$(have firejail && echo true || echo false)" \
+    '{libreoffice:(if $lo=="" then null else $lo end),
+      macro_security:{level:(if $ml=="?" then null else ($ml|tonumber) end), name:$mlname},
+      oletools:$oletools, firejail:$firejail}'
+}
+
+status_human() {
+  echo "Chakra Office"
+  echo "============"
+  echo
+  if have "$SOFFICE" || [[ -x "$SOFFICE" ]]; then
+    echo "LibreOffice:      $(_lo_ver | grep -q . && _lo_ver || echo present)"
+  else
+    echo "LibreOffice:      not installed"
+  fi
+  echo "Macro security:   $(_macro_word "$(_macro_level)")  (level $(_macro_level))"
+  echo "Doc inspection:   $(have olevba && echo 'oletools present' || echo 'oletools missing -- see office/README.md')"
+  echo "Sandbox:          $(have firejail && echo 'firejail present' || echo 'firejail MISSING')"
+  echo
+  echo "  open FILE      -- read-only, no network (add --trusted to edit)"
+  echo "  inspect FILE   -- macros / OLE / links, without opening it"
+  echo "  scrub FILE     -- a macro- and metadata-free copy"
+}
+
+# ------------------------------------------------------------------ dispatch
+
+json=0; [[ "${1:-}" == "--json" ]] && { json=1; shift; }
+cmd="${1:-status}"; shift || true
+
+case "$cmd" in
+  status|"")  if [[ $json -eq 1 ]]; then status_json; else status_human; fi ;;
+  open)       do_open "$@" ;;
+  inspect)    do_inspect "$@" ;;
+  scrub)      do_scrub "$@" ;;
+  -h|--help)  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "usage: chakra-office {status|open|inspect|scrub}" >&2; exit 1 ;;
+esac
+exit 0

@@ -35,12 +35,14 @@ Phases are ordered by dependency, not just topic — each phase only depends on 
 
 - **Phase 17 — Windows compatibility.** `chakra-compat` — a Chakra front-end over **Wine** (64-bit; `wine` / `wine64` from bookworm): `run FILE.exe` boxes the program in a firejail sandbox (`--net=none`, `--caps.drop=all`, `--nonewprivs`) in a prefix under `~/.local/share/chakra/wine/` — `--online` to allow net, `--prefix NAME` to pick one; `analyze FILE.exe` runs it offline in a throwaway prefix with a 60 s cap and reports SHA-256 + files created + registry Run/Winlogon/Services sections touched (hands off to `chakra-lab`); `prefix new|list|rm`; `winetricks` passthrough (upstream script, fetched — not in bookworm); `status` / `--json`. Every action → Chakra Audit. New **Compatibility** menu. Packages: `wine`, `wine64`. **Deferred**: 32-bit Windows apps (`wine32:i386` — documented opt-in, not bundled; ~doubles the footprint), Proton / Steam / gaming (`compatibility/proton/` stays reserved — Steam isn't in Debian main), Bottles / Lutris, a full inetsim-style detonation sandbox (same deferral as Phase 13). → `compatibility/`
 
+- **Phase 18 — Office & document safety.** The suite is **LibreOffice** (`libreoffice-writer` / `-calc` / `-impress` / `-gtk3`); the build sets macro security to **High** (level 2) in `/etc/skel` + the live user. `chakra-office` — the document-safety front-end: `open FILE` opens **read-only** in a firejail `--net=none` box (`--trusted` for full edit); `inspect FILE` reports macros / auto-exec / suspicious keywords / OLE objects / external links **without opening the file** (`oleid` + `olevba` — installed into an isolated venv at `/opt/chakra/venv/oletools`, symlinked to `/usr/local/bin`; not in Debian — plus `unzip` for OOXML rels), `--json`; `scrub FILE` writes a copy with `vbaProject.bin` and metadata (`exiftool -all=`) removed, converting legacy `.doc`/`.xls` first; `status` / `--json`. Every action → Chakra Audit. New **Office** menu. Packages: `libreoffice-writer`/`-calc`/`-impress`/`-gtk3`, `hunspell-en-us`, `python3-venv`, `zip`. **Deferred**: OnlyOffice / a further MS-Office-compat alternative, a real DLP / quarantine layer, `scrub` for exotic embedded content (ActiveX, RTF objects — `chakra-lab` is the deep dive). → `office/`
+
 ## In progress
 
-*(nothing active — Phases 1–17 done.)*
+*(nothing active — Phases 1–18 done.)*
 
 ## Directories reserved but not yet active
 
 - `desktop/launcher/`, `desktop/workspace-manager/` — the from-scratch QML shell components deferred in Phase 16; each has a README on what that entails.
 - `compatibility/proton/` — Proton / Steam gaming, deferred in Phase 17.
-- `office/` — an office suite (LibreOffice is in the repos; Chakra defaults / branding TBD) — not yet placed in a phase.
+- Everything else remaining is installer-dependent (a real local LLM, AppGuard, Secure Boot / TPM, disk persistence + block snapshots, 32-bit Wine) and is flagged inline above and in each area's README.

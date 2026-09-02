@@ -105,6 +105,19 @@ kdeconnect
 wine
 wine64
 
+# Phase 18: office + document safety. LibreOffice Writer/Calc/Impress
+# (the full 'libreoffice' metapackage is ~1 GB -- these three + the GTK3
+# integration are the suite). python3-venv: apply_office() builds an
+# isolated venv for oletools (olevba/oleid -- not in Debian). zip: used
+# by 'chakra-office scrub' to strip vbaProject.bin from OOXML.
+libreoffice-writer
+libreoffice-calc
+libreoffice-impress
+libreoffice-gtk3
+hunspell-en-us
+python3-venv
+zip
+
 # Audio foundation
 pipewire
 pipewire-pulse

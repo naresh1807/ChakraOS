@@ -1273,6 +1273,76 @@ EOF
   done < "$menu_cfg/tools.list"
 }
 
+install_oletools() {
+  # olevba / oleid / mraptor aren't in Debian. Install into a dedicated
+  # venv so there's zero impact on system Python, then symlink the entry
+  # points. Best-effort, non-fatal (chakra-office degrades to ZIP checks).
+  if [[ "$CLEAN" -eq 0 && -x "$ROOTFS/opt/chakra/venv/oletools/bin/olevba" ]]; then
+    log "oletools already present in rootfs -- skipping (use --clean to refresh)."
+  else
+    log "Installing oletools into an isolated venv (not in Debian repos)..."
+    chroot "$ROOTFS" bash -c '
+      python3 -m venv /opt/chakra/venv/oletools &&
+      /opt/chakra/venv/oletools/bin/pip install --no-cache-dir --quiet oletools
+    ' || { log "WARNING: oletools install failed (network?) -- chakra-office will do ZIP-level checks only."; return 0; }
+  fi
+  local b
+  for b in olevba oleid mraptor; do
+    [[ -x "$ROOTFS/opt/chakra/venv/oletools/bin/$b" ]] && \
+      ln -sf "/opt/chakra/venv/oletools/bin/$b" "$ROOTFS/usr/local/bin/$b"
+  done
+}
+
+apply_office() {
+  log "Installing Chakra Office (Phase 18: LibreOffice + chakra-office document safety)..."
+  local menu_cfg="$PROJECT_ROOT/config/office-menu"
+  local apps_dir="$ROOTFS/usr/share/applications"
+  local dirs_dir="$ROOTFS/usr/share/desktop-directories"
+  local merged_dir="$ROOTFS/etc/xdg/menus/applications-merged"
+  local bin_dir="$ROOTFS/usr/lib/chakra/bin"
+  mkdir -p "$apps_dir" "$dirs_dir" "$merged_dir" "$bin_dir"
+
+  install_oletools
+
+  cp "$PROJECT_ROOT/office/bin/chakra-office" "$bin_dir/chakra-office"
+  chmod +x "$bin_dir/chakra-office"
+  ln -sf /usr/lib/chakra/bin/chakra-office "$ROOTFS/usr/local/bin/chakra-office"
+
+  # LibreOffice macro security -> High (2): macros disabled, prompt to
+  # enable per document. Seeded into /etc/skel and the live user.
+  local xcu='<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+ <item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>2</value></prop></item>
+ <item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="DisableActiveContent" oor:op="fuse"><value>true</value></prop></item>
+</oor:items>'
+  local d
+  for d in "$ROOTFS/etc/skel" "$ROOTFS/home/$CHAKRA_USERNAME"; do
+    mkdir -p "$d/.config/libreoffice/4/user"
+    printf '%s\n' "$xcu" > "$d/.config/libreoffice/4/user/registrymodifications.xcu"
+  done
+  chroot "$ROOTFS" chown -R "$CHAKRA_USERNAME:$CHAKRA_USERNAME" "/home/$CHAKRA_USERNAME/.config" 2>/dev/null || true
+
+  cp "$menu_cfg/chakra-office.directory" "$dirs_dir/"
+  cp "$menu_cfg/chakra-office.menu" "$merged_dir/"
+
+  local tname cat exec_cmd needs_root safe_id run_cmd
+  while IFS='|' read -r tname cat exec_cmd needs_root; do
+    [[ -z "$tname" || "$tname" == \#* ]] && continue
+    safe_id="$(echo "$tname" | tr -c 'a-zA-Z0-9' '-' | tr -s '-')"
+    run_cmd="$exec_cmd"
+    [[ "$needs_root" == "1" ]] && run_cmd="sudo $exec_cmd"
+    cat > "$apps_dir/chakra-tool-office-$safe_id.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=$tname
+Icon=libreoffice-startcenter
+Exec=konsole -e bash -c "$run_cmd; echo; echo '--- press Enter to close ---'; read"
+Terminal=false
+Categories=X-Chakra-$cat;
+EOF
+  done < "$menu_cfg/tools.list"
+}
+
 build_squashfs() {
   log "Building squashfs from rootfs..."
   mkdir -p "$ISO_STAGE/live" "$ISO_STAGE/boot/grub"
@@ -1344,6 +1414,7 @@ main() {
   apply_mobile
   apply_shell
   apply_compat
+  apply_office
   cleanup_mounts
   build_squashfs
   stage_kernel_and_grub
