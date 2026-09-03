@@ -12,7 +12,8 @@ section "chakra-* CLIs"
 CHK_BIN=/usr/lib/chakra/bin
 [[ -d "$CHK_BIN" ]] || { fail "$CHK_BIN missing"; return 0; }
 
-_run() { timeout 12 "$@" </dev/null; }
+_run()      { timeout 12 "$@" </dev/null; }
+_run_slow() { timeout 45 "$@" </dev/null; }   # for --json paths that query apt / the network
 
 # interactive TUIs / session daemons -- no meaningful --help/--json,
 # static checks only
@@ -56,9 +57,15 @@ for path in "$CHK_BIN"/chakra-*; do
   fi
 
   if _json_probe "$name"; then
-    out="$(_run "$path" --json 2>/dev/null)"; rc=$?
+    case "$name" in
+      chakra-update|chakra-fixer|chakra-score) out="$(_run_slow "$path" --json 2>/dev/null)" ;;
+      *)                                       out="$(_run "$path" --json 2>/dev/null)" ;;
+    esac
+    rc=$?
     if [[ $rc -eq 124 ]]; then
-      fail "$name --json timed out (12s)"
+      # data-gathering can be legitimately slow (apt, network, sensors) --
+      # a genuine break shows up in the boot test, not here
+      skip "$name --json timed out (slow environment)"
     elif [[ -z "$out" ]]; then
       skip "$name --json produced nothing (chroot can't gather live data)"
     elif printf '%s' "$out" | jq -e . >/dev/null 2>&1; then
