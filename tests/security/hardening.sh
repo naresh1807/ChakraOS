@@ -66,3 +66,27 @@ fi
 # --- USB Guard policy shipped (Phase 8) -------------------------------
 [[ -f /etc/usbguard/rules.conf || -f /etc/chakra/policy.d/usbguard.policy ]] \
   && ok "usbguard policy present" || skip "usbguard policy (not found in expected paths)"
+
+# --- no API key baked into the image (Sentinel, Phase 7) --------------
+sc=/etc/chakra/sentinel.conf
+if [[ -f "$sc" ]]; then
+  if grep -Eq '^\s*(GEMINI_API_KEY|NIM_API_KEY)\s*=\s*\S' "$sc"; then
+    fail "$sc ships with an API key set -- no credential belongs in the image"
+  else
+    ok "sentinel.conf ships with no API key (offline by default)"
+  fi
+else
+  skip "sentinel.conf not present"
+fi
+
+# --- default account has no committed password ----------------------
+# (passwordless is fine for a live ISO; a *set* password would mean the
+#  build baked one in, which it must not)
+if [[ -n "$user" ]]; then
+  st="$(passwd -S "$user" 2>/dev/null | awk '{print $2}')"
+  case "$st" in
+    NP|L) ok "default account password is not baked in (state: $st)" ;;
+    P)    skip "default account has a password set (fine if set interactively / via \$CHAKRA_USER_PASSWORD)" ;;
+    *)    skip "default account password state: ${st:-unknown}" ;;
+  esac
+fi
