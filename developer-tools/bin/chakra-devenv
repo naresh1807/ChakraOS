@@ -65,9 +65,10 @@ for f in "$dir/.env" "$dir/.env.local" "$dir/.env.development"; do [[ -f "$f" ]]
 
 if [[ $json -eq 1 ]]; then
   jq -n --arg dir "$dir" \
-    --argjson kinds "$(printf '%s\n' "${kinds[@]}" | jq -R . | jq -s .)" \
+    --argjson kinds "$(printf '%s\n' "${kinds[@]:-}" | jq -R 'select(.!="")' | jq -s .)" \
     --arg envfile "${envfile:-}" \
-    '{directory:$dir, project_kinds:$kinds, env_file:($envfile|select(.!=""))}'
+    '{directory:$dir, project_kinds:$kinds,
+      env_file:(if $envfile=="" then null else $envfile end)}'
   exit 0
 fi
 

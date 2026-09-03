@@ -29,10 +29,12 @@ DEBIAN_MIRROR="http://deb.debian.org/debian"
 
 CLEAN=0
 RUN_TEST=0
+STRICT_CHECK=0
 for arg in "$@"; do
   case "$arg" in
     --clean) CLEAN=1 ;;
     --test) RUN_TEST=1 ;;
+    --check) STRICT_CHECK=1 ;;
     *) echo "Unknown argument: $arg" >&2; exit 1 ;;
   esac
 done
@@ -1343,6 +1345,36 @@ EOF
   done < "$menu_cfg/tools.list"
 }
 
+cleanup_rootfs() {
+  # Strip transient junk before it gets sealed into the squashfs: scratch
+  # files from apply_* chroot work, caches, apt lists, machine identity
+  # (a live image must regenerate its own on first boot).
+  log "Cleaning transient files from the rootfs..."
+  rm -rf "$ROOTFS"/tmp/* "$ROOTFS"/tmp/.??* \
+         "$ROOTFS"/var/tmp/* \
+         "$ROOTFS"/root/.cache "$ROOTFS"/root/.wine \
+         "$ROOTFS"/home/*/.cache 2>/dev/null || true
+  rm -f  "$ROOTFS"/var/lib/apt/lists/*_* \
+         "$ROOTFS"/var/cache/apt/archives/*.deb \
+         "$ROOTFS"/etc/machine-id "$ROOTFS"/var/lib/dbus/machine-id 2>/dev/null || true
+  : > "$ROOTFS/etc/machine-id" 2>/dev/null || true
+  find "$ROOTFS/var/log" -type f -exec truncate -s 0 {} + 2>/dev/null || true
+}
+
+run_checks() {
+  # The tests/ suite: chakra-* CLIs, menu wiring, security substrate.
+  # Fatal only with --check; otherwise a failure is logged and the build
+  # continues (so a missing-in-chroot runtime dep doesn't block a release).
+  [[ -x "$PROJECT_ROOT/tests/run.sh" ]] || return 0
+  log "Running the tests/ check suite against the rootfs..."
+  if CHAKRA_ROOTFS="$ROOTFS" bash "$PROJECT_ROOT/tests/run.sh"; then
+    log "Checks passed."
+  else
+    log "WARNING: tests/run.sh reported failures (see above)."
+    [[ "${STRICT_CHECK:-0}" -eq 1 ]] && { log "--check is set -- aborting."; exit 1; }
+  fi
+}
+
 build_squashfs() {
   log "Building squashfs from rootfs..."
   mkdir -p "$ISO_STAGE/live" "$ISO_STAGE/boot/grub"
@@ -1415,7 +1447,9 @@ main() {
   apply_shell
   apply_compat
   apply_office
+  run_checks
   cleanup_mounts
+  cleanup_rootfs
   build_squashfs
   stage_kernel_and_grub
   build_iso

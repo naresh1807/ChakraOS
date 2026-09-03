@@ -4,6 +4,19 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Dates ar
 
 ## [Unreleased]
 
+## 2026-09-03 — Phase 19: test harness & build hygiene
+
+### Added
+- `tests/` — a deterministic, read-only check suite. `sudo tests/run.sh` chroots into `build/rootfs`; `tests/run.sh --here` runs against the current system (use on the live ISO). Exit non-zero on any failure.
+  - `unit/chakra-tools.sh` — every `chakra-*` CLI: installed, executable, `bash -n` clean, `--help` doesn't hang (time-boxed, `</dev/null`), and bare `--json` (where it's a status flag) is valid JSON. Chroot can't run podman/systemd/hardware, so "produced nothing there" is a SKIP; only non-empty-but-invalid JSON fails.
+  - `integration/menus.sh` — every `config/*/tools.list` row → a `.desktop` (matched on `Name=`); every chakra `.desktop` → an `Exec` command on `PATH` + an `X-Chakra-*` category some `.menu` includes; every `.menu` → a real `.directory`.
+  - `security/hardening.sh` — nftables input `policy drop` + established/related, hardening sysctls present *and `ptrace_scope` left open* (Phase 5), `auditd log_group = adm`, default user in `sudo`+`adm`, `chakra-core` layout, `/etc/chakra-release`, LibreOffice macro security ≥ High.
+  - `lib.sh` assertion helpers; `boot/README.md` documents the QEMU `--test` smoke and the manual VirtualBox procedure.
+- `build_iso.sh`: `run_checks` runs the suite after the `apply_*` steps (warns; fatal with the new `--check` flag); `cleanup_rootfs` strips `/tmp`, `~/.cache`, apt lists/archives, `machine-id`, and truncates `/var/log` before the squashfs is sealed.
+
+### Fixed
+- `chakra-devenv --json` emitted **nothing** in any directory without a `.env` file — `{…, env_file:($envfile|select(.!=""))}` makes jq suppress the entire object when the value stream is empty. Now `(if $envfile=="" then null else … end)`. (Caught by `tests/unit/chakra-tools.sh`.)
+
 ## 2026-09-02 — Phase 18: office & document safety
 
 ### Added

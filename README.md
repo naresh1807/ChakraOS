@@ -6,7 +6,7 @@ See `docs/` for phase-by-phase status and the full roadmap.
 
 ## Status
 
-**Phases 1–18 complete** (the roadmap through office & document safety). A reproducible Debian 12 (bookworm) + KDE Plasma 5.27 live ISO that:
+**Phases 1–19 complete** (roadmap through office/document safety, plus a test harness). A reproducible Debian 12 (bookworm) + KDE Plasma 5.27 live ISO that:
 
 - boots to a Windows 11-styled Plasma desktop with a full Sudarshana Chakra identity (boot splash, wallpaper, login screen, desktop icons, familiar app naming);
 - ships ~49 curated security/forensics apt packages plus Metasploit, Nikto and Burp Suite Community, in a Kali-style categorized "Security Tools" menu;
@@ -25,6 +25,8 @@ See `docs/` for phase-by-phase status and the full roadmap.
 - has **`chakra-shell`** — the shell-control CLI: `light` / `dark` / `high-contrast` / `auto` (day-night) theme modes over three Chakra-branded colour schemes, plus `layout reset`; the stock Plasma launcher/dock/panel/notifications stay, fully Chakra-themed (custom QML components are deliberately deferred — see `desktop/`);
 - has **`chakra-compat`** — run Windows `.exe` files on Wine (64-bit), boxed in a no-network firejail sandbox by default, with an `analyze` mode (offline throwaway prefix + change report) for untrusted Windows samples that pairs with `chakra-lab`;
 - has **LibreOffice + `chakra-office`** — the suite, with macro security forced High, plus `open` (read-only, sandboxed), `inspect` (macro / OLE / external-link triage via oletools without opening the file), and `scrub` (a macro- and metadata-free copy).
+
+- has a **check suite** (`tests/`) — `sudo tests/run.sh` chroots into `build/rootfs` and asserts every `chakra-*` CLI, Start-menu entry, and the security substrate; the build runs it automatically (`--check` to make failures fatal).
 
 `compatibility/proton/` (Steam/Proton gaming) isn't yet placed in a phase, and a few things are deliberately deferred to a future installer (a real local LLM, AppGuard, Secure Boot, persistence, custom shell widgets, 32-bit Wine) — all called out in `docs/roadmap.md` and each area's `README.md`.
 
@@ -45,6 +47,7 @@ See `docs/` for phase-by-phase status and the full roadmap.
 - `desktop/` — Phase 16: `chakra-shell` + Chakra colour schemes; `launcher/` and `workspace-manager/` reserved for the deferred custom QML components.
 - `compatibility/` — Phase 17: `chakra-compat` (Wine front-end); `proton/` reserved for gaming.
 - `office/` — Phase 18: `chakra-office` (LibreOffice + document-safety front-end).
+- `tests/` — Phase 19: the read-only check suite (`run.sh`, `unit/`, `integration/`, `security/`, `boot/`).
 - Every other top-level directory mirrors the project's long-term architecture; see `docs/roadmap.md`.
 
 ## Building the ISO

@@ -37,9 +37,11 @@ Phases are ordered by dependency, not just topic — each phase only depends on 
 
 - **Phase 18 — Office & document safety.** The suite is **LibreOffice** (`libreoffice-writer` / `-calc` / `-impress` / `-gtk3`); the build sets macro security to **High** (level 2) in `/etc/skel` + the live user. `chakra-office` — the document-safety front-end: `open FILE` opens **read-only** in a firejail `--net=none` box (`--trusted` for full edit); `inspect FILE` reports macros / auto-exec / suspicious keywords / OLE objects / external links **without opening the file** (`oleid` + `olevba` — installed into an isolated venv at `/opt/chakra/venv/oletools`, symlinked to `/usr/local/bin`; not in Debian — plus `unzip` for OOXML rels), `--json`; `scrub FILE` writes a copy with `vbaProject.bin` and metadata (`exiftool -all=`) removed, converting legacy `.doc`/`.xls` first; `status` / `--json`. Every action → Chakra Audit. New **Office** menu. Packages: `libreoffice-writer`/`-calc`/`-impress`/`-gtk3`, `hunspell-en-us`, `python3-venv`, `zip`. **Deferred**: OnlyOffice / a further MS-Office-compat alternative, a real DLP / quarantine layer, `scrub` for exotic embedded content (ActiveX, RTF objects — `chakra-lab` is the deep dive). → `office/`
 
+- **Phase 19 — Test harness & build hygiene.** `tests/` — a deterministic, read-only check suite run by `tests/run.sh` (chroots into `build/rootfs`, or `--here` on the live ISO): `unit/chakra-tools.sh` (every `chakra-*` CLI installed / executable / `bash -n` clean / `--help` doesn't hang / bare `--json` is valid JSON), `integration/menus.sh` (every `tools.list` row → a `.desktop`; every `.desktop` → a real command + a category a `.menu` serves; every `.menu` → a real `.directory`), `security/hardening.sh` (nftables default-deny, hardening sysctls with ptrace_scope left *open*, `auditd log_group=adm`, default user in `sudo`+`adm`, `chakra-core` layout, LibreOffice macro policy). `build_iso.sh` gains `run_checks` (runs the suite after the `apply_*` steps; warns, or fatal with `--check`) and `cleanup_rootfs` (strips `/tmp`, caches, apt lists, machine-id, and truncates logs before the squashfs is sealed). Fixed a bug the suite caught: `chakra-devenv --json` emitted nothing when no `.env` was present (`{k: (…|select())}` suppressed the whole object). → `tests/`
+
 ## In progress
 
-*(nothing active — Phases 1–18 done.)*
+*(nothing active — Phases 1–19 done.)*
 
 ## Directories reserved but not yet active
 
