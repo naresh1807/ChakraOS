@@ -1,0 +1,54 @@
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y shellcheck
+
+      - name: Collect shell scripts
+        id: scripts
+        run: |
+          # every tracked file that is a shell script (by extension or shebang)
+          mapfile -t files < <(
+            git ls-files | while read -r f; do
+              case "$f" in
+                *.sh) echo "$f" ;;
+                *) [ -f "$f" ] && head -c2 "$f" | grep -q '#!' && head -1 "$f" | grep -Eq 'bin/(ba)?sh' && echo "$f" ;;
+              esac
+            done
+          )
+          printf '%s\n' "${files[@]}" | tee scripts.list
+          echo "count=${#files[@]}" >> "$GITHUB_OUTPUT"
+
+      - name: bash -n (syntax) — must pass
+        run: |
+          rc=0
+          while read -r f; do
+            [ -n "$f" ] || continue
+            if bash -n "$f"; then echo "ok   $f"; else echo "FAIL $f"; rc=1; fi
+          done < scripts.list
+          exit $rc
+
+      - name: shellcheck — advisory
+        continue-on-error: true
+        run: |
+          xargs -a scripts.list shellcheck -S warning -e SC1090,SC1091 || true
+
+  build-deps-doc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build_iso.sh header lists the host deps it checks for
+        run: |
+          # the dep list in the usage/error text must match check_host_deps()
+          grep -q 'debootstrap squashfs-tools xorriso' build/scripts/build_iso.sh

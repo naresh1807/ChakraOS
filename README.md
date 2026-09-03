@@ -53,10 +53,15 @@ See `docs/` for phase-by-phase status and the full roadmap.
 ## Building the ISO
 
 ```
-sudo build/scripts/build_iso.sh
+sudo build/scripts/build_iso.sh            # reuse an existing build/rootfs
+sudo build/scripts/build_iso.sh --clean    # from-scratch debootstrap (the reproducibility path)
+sudo build/scripts/build_iso.sh --check    # make a failing tests/run.sh abort the build
+sudo build/scripts/build_iso.sh --test     # boot the finished ISO in QEMU
 ```
 
-Requires on the host: `debootstrap`, `squashfs-tools`, `xorriso`, `grub-pc-bin`, `grub-efi-amd64-bin`, `mtools`, `dosfstools`. See `docs/phase1-status.md` for what's currently installed on the reference build machine.
+Requires on the host: `debootstrap`, `squashfs-tools`, `xorriso`, `grub-pc-bin`, `grub-efi-amd64-bin`, `mtools`, `dosfstools`.
+
+CI (`.github/workflows/`): `lint` runs `bash -n` + shellcheck on every push; `build-iso` runs a full `--clean --check` build (the reproducibility check) on version tags and on demand, and uploads the ISO as an artifact.
 
 ## Contributing
 

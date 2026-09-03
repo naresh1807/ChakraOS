@@ -1,0 +1,53 @@
+name: build-iso
+
+# The reproducibility check: a from-scratch --clean build in a fresh
+# runner. Not on every push (it's ~45-60 min and pulls multi-GB); run it
+# on demand and on version tags.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  iso:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free up disk (runners ship ~14 GB free; a build needs ~20)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force || true
+          df -h /
+
+      - name: Install host build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y debootstrap squashfs-tools xorriso \
+            grub-pc-bin grub-efi-amd64-bin mtools dosfstools qemu-system-x86
+
+      - name: Build (--clean --check)
+        run: sudo build/scripts/build_iso.sh --clean --check
+
+      - name: Checksum + summary
+        run: |
+          cd build/output
+          sha256sum -c ./*.iso.sha256
+          ls -lh ./*.iso
+          {
+            echo "## Chakra OS ISO"
+            echo '```'
+            cat ./*.iso.sha256
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chakra-os-iso
+          path: |
+            build/output/*.iso
+            build/output/*.iso.sha256
+          retention-days: 14
+          if-no-files-found: error
