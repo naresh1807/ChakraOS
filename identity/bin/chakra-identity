@@ -33,7 +33,16 @@ json=0; [[ "${1:-}" == "--json" ]] && { json=1; shift; }
 action="${1:-status}"
 
 _pw_state()  { passwd -S "$USER_NAME" 2>/dev/null | awk '{print $2}'; }   # P / L / NP
-_autologin() { grep -rqsi '^\s*Autologin' /etc/sddm.conf /etc/sddm.conf.d/ 2>/dev/null && echo yes || echo no; }
+_autologin() {
+  local f
+  for f in /etc/sddm.conf /etc/sddm.conf.d/*.conf; do
+    [[ -f "$f" ]] || continue
+    awk '/^\[Autologin\]/{a=1;next} /^\[/{a=0}
+         a && /^[[:space:]]*User[[:space:]]*=[[:space:]]*[^[:space:]]/{print "yes"; exit}' "$f" | grep -q yes \
+      && { echo yes; return; }
+  done
+  echo no
+}
 _u2f_count() { [[ -s "$U2F_KEYS" ]] || { echo 0; return; }; awk -F: 'NR==1{print NF-1}' "$U2F_KEYS"; }
 _pam_u2f()   { grep -qs 'pam_u2f.so' "$PAM_SUDO" && echo yes || echo no; }
 _fp_reader() {

@@ -216,8 +216,23 @@ create_default_user() {
   else
     log "Creating default user '$CHAKRA_USERNAME'..."
     chroot "$ROOTFS" adduser --disabled-password --gecos "" "$CHAKRA_USERNAME"
-    echo "Set a password for the '$CHAKRA_USERNAME' account in the built image:"
-    chroot "$ROOTFS" passwd "$CHAKRA_USERNAME"
+    if [[ -n "${CHAKRA_USER_PASSWORD:-}" ]]; then
+      # For an installer-driven / non-live build. Never committed -- comes
+      # from the environment (see config/defaults/user.conf).
+      log "Setting the '$CHAKRA_USERNAME' password from \$CHAKRA_USER_PASSWORD."
+      printf '%s:%s\n' "$CHAKRA_USERNAME" "$CHAKRA_USER_PASSWORD" | chroot "$ROOTFS" chpasswd
+    elif [[ -t 0 ]]; then
+      echo "Set a password for the '$CHAKRA_USERNAME' account (Enter twice = passwordless live account):"
+      chroot "$ROOTFS" passwd "$CHAKRA_USERNAME" || true
+    else
+      # No password and no TTY (CI / automated --clean). A live ISO is
+      # fine passwordless: SDDM autologin gets you to the desktop, and
+      # bookworm's PAM 'common-auth' has 'nullok' so `sudo` works on an
+      # empty password (just press Enter). Set CHAKRA_USER_PASSWORD for a
+      # real build.
+      log "No \$CHAKRA_USER_PASSWORD and no TTY -- leaving '$CHAKRA_USERNAME' PASSWORDLESS (live-ISO default)."
+      chroot "$ROOTFS" passwd -d "$CHAKRA_USERNAME"
+    fi
   fi
 
   # Always (re)apply group membership, even on a rootfs that persists
