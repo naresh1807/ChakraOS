@@ -1,0 +1,404 @@
+#!/bin/bash
+# chakra-bounty -- a bug bounty workflow: programs, scope, recon, report.
+#
+# Bug bounty is authorised testing, but only inside a program's scope and
+# rate limits -- go outside them on a live program and you get banned.
+# So chakra-bounty makes scope a first-class thing: `recon`, `urls` and
+# `scan` route every target through `scope check` before touching it, and
+# ship with conservative rate limits you can raise per program.
+#
+# Each program lives in ~/bounty/<handle>/ :
+#   meta.json  scope.txt  out.txt  notes.md  recon/  urls/  loot/
+#
+# The tools it drives (subfinder, dnsx, httpx, nuclei, katana, gau,
+# waybackurls, dalfox, gowitness, notify, ffuf) are installed by the
+# Chakra build into /opt/chakra/bounty/bin. `chakra-bounty tools` shows
+# what's present; `chakra-bounty wordlists` fetches SecLists on demand.
+#
+# Usage:
+#   chakra-bounty program new <handle> [--platform hackerone|bugcrowd|intigriti|private]
+#   chakra-bounty program list | show <handle> | use <handle>
+#   chakra-bounty scope add <handle> <pattern>...     *.example.com  api.example.com  1.2.3.0/24
+#   chakra-bounty scope out <handle> <pattern>...
+#   chakra-bounty scope check <handle> <target>       exit 0 = in scope
+#   chakra-bounty recon [<handle>] [--dry-run]        subfinder -> dnsx -> httpx  (scoped)
+#   chakra-bounty urls  [<handle>] [--dry-run]        gau + waybackurls + katana  (scoped)
+#   chakra-bounty scan  [<handle>] [--dry-run]        nuclei vs. live hosts (rate-limited)
+#   chakra-bounty note  <handle> "<entry>"
+#   chakra-bounty report <handle>                     hand off to chakra-reporter
+#   chakra-bounty h1 programs | import <handle>       HackerOne API (token in ~/.config/chakra/bounty.conf)
+#   chakra-bounty status | --json | tools | wordlists
+set -u
+export PATH="/opt/chakra/bounty/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
+ROOT="${CHAKRA_BOUNTY_HOME:-$HOME/bounty}"
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/chakra/bounty.conf"
+ACTIVE_FILE="$ROOT/.active"
+BOUNTY_BIN=/opt/chakra/bounty/bin
+SECLISTS="/opt/chakra/bounty/SecLists"
+
+# conservative defaults -- raise per program in meta.json ("rate_limit")
+DEF_RL=25          # requests/sec for httpx / nuclei
+DEF_CONC=15        # concurrency
+
+have() { command -v "$1" >/dev/null 2>&1; }
+[[ -f "$CONF" ]] && { set -a; . "$CONF" 2>/dev/null; set +a; }
+
+_audit() {  # action target result [tier]
+  have chakra-audit-log || return 0
+  chakra-audit-log --actor chakra-bounty --action "$1" --target "$2" \
+    --risk-tier "${4:-2}" --approved-by "user (program: ${3%% *})" --result "$3" 2>/dev/null || true
+}
+
+_die()  { echo "chakra-bounty: $*" >&2; exit 1; }
+_pdir() { echo "$ROOT/$1"; }
+_active() { [[ -f "$ACTIVE_FILE" ]] && cat "$ACTIVE_FILE" || true; }
+_resolve_handle() {  # arg or active
+  local h="${1:-$(_active)}"
+  [[ -n "$h" ]] || _die "no program given and none active -- 'chakra-bounty program use <handle>'"
+  [[ -d "$(_pdir "$h")" ]] || _die "no such program '$h' -- 'chakra-bounty program new $h'"
+  echo "$h"
+}
+_meta() { jq -r "$2 // empty" "$(_pdir "$1")/meta.json" 2>/dev/null; }
+_rl()   { local v; v="$(_meta "$1" .rate_limit)"; [[ "$v" =~ ^[0-9]+$ ]] && echo "$v" || echo "$DEF_RL"; }
+
+# ---------------------------------------------------------------- scope
+
+# a pattern is one of: bare host, *.domain (wildcard), CIDR, or a URL.
+# _in_scope <handle> <target>  -> 0 if in scope AND not out-of-scope
+_host_of() { sed -E 's#^[a-z]+://##; s#/.*$##; s#:[0-9]+$##' <<<"$1" | tr 'A-Z' 'a-z'; }
+_match_one() {  # host pattern
+  local host="$1" pat; pat="$(tr 'A-Z' 'a-z' <<<"$2")"
+  pat="$(_host_of "$pat")"
+  case "$pat" in
+    \*.*)  [[ "$host" == "${pat#\*.}" || "$host" == *".${pat#\*.}" ]] ;;
+    */*)   have grepcidr && grepcidr "$pat" <<<"$host" >/dev/null 2>&1 ;;  # CIDR (best-effort)
+    *)     [[ "$host" == "$pat" ]] ;;
+  esac
+}
+_in_scope() {
+  local h="$1" host; host="$(_host_of "$2")"
+  local sf; sf="$(_pdir "$h")/scope.txt"; local of; of="$(_pdir "$h")/out.txt"
+  [[ -s "$sf" ]] || return 1
+  local p matched=1
+  while read -r p; do [[ -z "$p" || "$p" == \#* ]] && continue; _match_one "$host" "$p" && { matched=0; break; }; done < "$sf"
+  [[ $matched -eq 0 ]] || return 1
+  if [[ -s "$of" ]]; then
+    while read -r p; do [[ -z "$p" || "$p" == \#* ]] && continue; _match_one "$host" "$p" && return 1; done < "$of"
+  fi
+  return 0
+}
+# filter stdin (one host/url per line) to in-scope lines
+_scope_filter() {
+  local h="$1" line kept=0 dropped=0
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if _in_scope "$h" "$line"; then echo "$line"; kept=$((kept+1)); else dropped=$((dropped+1)); fi
+  done
+  [[ $dropped -gt 0 ]] && echo "  ($dropped out-of-scope target(s) dropped)" >&2
+  [[ $kept -gt 0 ]]
+}
+
+# ---------------------------------------------------------------- programs
+
+do_program() {
+  local sub="${1:-list}"; shift || true
+  case "$sub" in
+    new)
+      local handle="${1:-}"; shift || true
+      [[ -n "$handle" ]] || _die "chakra-bounty program new <handle>"
+      local plat=private
+      [[ "${1:-}" == "--platform" ]] && { plat="${2:?}"; shift 2; }
+      local d; d="$(_pdir "$handle")"
+      [[ -d "$d" ]] && _die "program '$handle' already exists"
+      mkdir -p "$d"/{recon,urls,loot}
+      : > "$d/scope.txt"; : > "$d/out.txt"
+      printf '# %s -- timeline\n\n' "$handle" > "$d/notes.md"
+      jq -n --arg h "$handle" --arg p "$plat" --arg t "$(date -u +%FT%TZ)" \
+        '{handle:$h, platform:$p, created:$t, rate_limit:'"$DEF_RL"'}' > "$d/meta.json"
+      echo "$handle" > "$ACTIVE_FILE"
+      echo "Created ~/bounty/$handle  (platform: $plat, active)"
+      echo "Next: chakra-bounty scope add $handle '*.example.com'"
+      _audit "program.new" "$handle" "$handle created" 1 ;;
+    list)
+      [[ -d "$ROOT" ]] || { echo "no programs yet -- chakra-bounty program new <handle>"; return; }
+      local a; a="$(_active)"
+      for d in "$ROOT"/*/; do
+        [[ -f "$d/meta.json" ]] || continue
+        local hh; hh="$(basename "$d")"
+        printf '%s %-22s %-11s scope:%s live:%s\n' \
+          "$([[ "$hh" == "$a" ]] && echo '*' || echo ' ')" \
+          "$hh" "$(jq -r .platform "$d/meta.json" 2>/dev/null)" \
+          "$(grep -cvE '^\s*(#|$)' "$d/scope.txt" 2>/dev/null || echo 0)" \
+          "$( [[ -f "$d/recon/live.txt" ]] && wc -l < "$d/recon/live.txt" || echo 0 )"
+      done ;;
+    show)
+      local h; h="$(_resolve_handle "${1:-}")"; local d; d="$(_pdir "$h")"
+      echo "Program:   $h    ($(jq -r .platform "$d/meta.json"))"
+      echo "Created:   $(jq -r .created "$d/meta.json")"
+      echo "Rate:      $(_rl "$h") req/s"
+      echo; echo "In scope ($(grep -cvE '^\s*(#|$)' "$d/scope.txt" 2>/dev/null || echo 0)):"
+      grep -vE '^\s*(#|$)' "$d/scope.txt" 2>/dev/null | sed 's/^/  /'
+      if [[ -s "$d/out.txt" ]]; then echo; echo "Out of scope:"; grep -vE '^\s*(#|$)' "$d/out.txt" | sed 's/^/  /'; fi
+      local n_subs n_live n_urls
+      n_subs="$( [[ -f "$d/recon/subs.txt" ]] && wc -l < "$d/recon/subs.txt" || echo 0 )"
+      n_live="$( [[ -f "$d/recon/live.txt" ]] && wc -l < "$d/recon/live.txt" || echo 0 )"
+      n_urls="$( [[ -f "$d/urls/all.txt"   ]] && wc -l < "$d/urls/all.txt"   || echo 0 )"
+      echo; echo "Recon:     $n_subs subs, $n_live live, $n_urls urls" ;;
+    use)
+      local h; h="$(_resolve_handle "${1:-}")"
+      echo "$h" > "$ACTIVE_FILE"; echo "Active program: $h" ;;
+    *) _die "program: new | list | show | use" ;;
+  esac
+}
+
+# ---------------------------------------------------------------- scope cmds
+
+do_scope() {
+  local sub="${1:?scope: add | out | check}"; shift
+  case "$sub" in
+    add|out)
+      local h; h="$(_resolve_handle "${1:-}")"; shift
+      local f; f="$(_pdir "$h")/$([[ "$sub" == add ]] && echo scope.txt || echo out.txt)"
+      local n=0 p
+      for p in "$@"; do printf '%s\n' "$p" >> "$f"; n=$((n+1)); done
+      sort -u -o "$f" "$f"
+      echo "added $n pattern(s) to $([[ "$sub" == add ]] && echo in-scope || echo out-of-scope) for $h"
+      _audit "scope.$sub" "$h" "$*" 1 ;;
+    check)
+      local h; h="$(_resolve_handle "${1:-}")"; local t="${2:?chakra-bounty scope check <handle> <target>}"
+      if _in_scope "$h" "$t"; then echo "IN SCOPE: $t"; exit 0; else echo "NOT in scope: $t"; exit 1; fi ;;
+    *) _die "scope: add | out | check" ;;
+  esac
+}
+
+# ---------------------------------------------------------------- pipelines
+
+_need() { have "$1" || _die "'$1' is not installed -- run: chakra-bounty tools"; }
+
+# pull --dry-run out of the args from any position; leaves DRY set and the
+# remaining positionals in the array REST
+DRY=0
+_parse_flags() { DRY=0; REST=(); local a; for a in "$@"; do case "$a" in --dry-run) DRY=1;; *) REST+=("$a");; esac; done; }
+
+_domain_roots() {  # scope.txt -> registrable domains only (skip IPs / CIDRs)
+  grep -vE '^\s*(#|$)' "$1" \
+    | sed -E 's/^\*\.//; s#^[a-z]+://##; s#/.*##; s#:[0-9]+$##' \
+    | grep -E '[a-z]' | grep -vE '^[0-9.]+$' | sort -u
+}
+
+do_recon() {
+  _parse_flags "$@"
+  local h; h="$(_resolve_handle "${REST[0]:-}")"; local d; d="$(_pdir "$h")"
+  [[ -s "$d/scope.txt" ]] || _die "no scope for '$h' -- chakra-bounty scope add $h ..."
+  local dry="$DRY"
+  # roots = the registrable domains from wildcard/host scope entries
+  local roots; roots="$(_domain_roots "$d/scope.txt")"
+  echo "Program $h -- recon over: $(tr '\n' ' ' <<<"$roots")"
+  local rl; rl="$(_rl "$h")"
+  if [[ $dry -eq 1 ]]; then
+    echo "  would run: subfinder -d <root> -all  ->  dnsx  ->  httpx -rl $rl -sc -title -td"
+    return 0
+  fi
+  _need subfinder; _need httpx
+  : > "$d/recon/subs.txt"
+  local r
+  while read -r r; do [[ -n "$r" ]] && subfinder -silent -all -d "$r" 2>/dev/null >> "$d/recon/subs.txt"; done <<<"$roots"
+  # always include the roots themselves
+  printf '%s\n' $roots >> "$d/recon/subs.txt"
+  sort -u -o "$d/recon/subs.txt" "$d/recon/subs.txt"
+  echo "  $(wc -l < "$d/recon/subs.txt") candidate hosts"
+  # keep only in-scope, resolve, probe
+  _scope_filter "$h" < "$d/recon/subs.txt" > "$d/recon/subs.scoped.txt" || _die "nothing in scope after filtering"
+  if have dnsx; then dnsx -silent -a -resp-only < "$d/recon/subs.scoped.txt" 2>/dev/null | sort -u > "$d/recon/resolved.txt" || true; fi
+  httpx -silent -rl "$rl" -sc -title -td -location -no-color \
+    < "$d/recon/subs.scoped.txt" 2>/dev/null | tee "$d/recon/httpx.txt"
+  awk '{print $1}' "$d/recon/httpx.txt" > "$d/recon/live.txt"
+  echo "  -> $(wc -l < "$d/recon/live.txt") live hosts  ($d/recon/)"
+  _audit "recon" "$h" "$(wc -l < "$d/recon/live.txt") live" 2
+}
+
+do_urls() {
+  _parse_flags "$@"
+  local h; h="$(_resolve_handle "${REST[0]:-}")"; local d; d="$(_pdir "$h")"
+  local roots; roots="$(_domain_roots "$d/scope.txt")"
+  if [[ $DRY -eq 1 ]]; then echo "  would run: gau + waybackurls over $(tr '\n' ' ' <<<"$roots"); katana over live hosts"; return 0; fi
+  : > "$d/urls/all.txt"
+  local r
+  while read -r r; do
+    [[ -z "$r" ]] && continue
+    have gau && gau --subs "$r" 2>/dev/null >> "$d/urls/all.txt"
+    have waybackurls && waybackurls "$r" 2>/dev/null >> "$d/urls/all.txt"
+  done <<<"$roots"
+  [[ -s "$d/recon/live.txt" ]] && have katana && \
+    katana -silent -jc -d 2 -list "$d/recon/live.txt" 2>/dev/null >> "$d/urls/all.txt"
+  # scope-filter, dedupe
+  sort -u "$d/urls/all.txt" | _scope_filter "$h" > "$d/urls/scoped.txt" || true
+  mv "$d/urls/scoped.txt" "$d/urls/all.txt"
+  grep -E '\?' "$d/urls/all.txt" | sort -u > "$d/urls/params.txt" 2>/dev/null || true
+  echo "  $(wc -l < "$d/urls/all.txt") urls, $(wc -l < "$d/urls/params.txt" 2>/dev/null || echo 0) with parameters  ($d/urls/)"
+  _audit "urls" "$h" "$(wc -l < "$d/urls/all.txt") urls" 2
+}
+
+do_scan() {
+  _parse_flags "$@"
+  local h; h="$(_resolve_handle "${REST[0]:-}")"; local d; d="$(_pdir "$h")"
+  local rl; rl="$(_rl "$h")"
+  if [[ $DRY -eq 1 ]]; then
+    echo "  would run: nuclei -l recon/live.txt -rl $rl -c $DEF_CONC -severity low,medium,high,critical"
+    return 0
+  fi
+  [[ -s "$d/recon/live.txt" ]] || _die "no live hosts -- run 'chakra-bounty recon $h' first"
+  _need nuclei
+  echo "nuclei vs. $(wc -l < "$d/recon/live.txt") hosts at $rl req/s -- Ctrl-C to stop"
+  nuclei -silent -l "$d/recon/live.txt" -rl "$rl" -c "$DEF_CONC" \
+    -severity low,medium,high,critical -no-color \
+    -o "$d/loot/nuclei.txt" 2>/dev/null
+  local n; n="$(wc -l < "$d/loot/nuclei.txt" 2>/dev/null || echo 0)"
+  echo "  $n finding(s) -> $d/loot/nuclei.txt"
+  [[ "$n" -gt 0 ]] && sed 's/^/  /' "$d/loot/nuclei.txt"
+  _audit "scan" "$h" "$n nuclei findings" 2
+}
+
+# ---------------------------------------------------------------- misc
+
+do_note() {
+  local h; h="$(_resolve_handle "${1:-}")"; shift
+  local d; d="$(_pdir "$h")"
+  printf -- '- %s  %s\n' "$(date -u +%FT%TZ)" "$*" >> "$d/notes.md"
+  echo "noted."
+}
+
+do_report() {
+  local h; h="$(_resolve_handle "${1:-}")"; local d; d="$(_pdir "$h")"
+  have chakra-reporter || _die "chakra-reporter not found (Phase 13)"
+  local slug="bb-$h"
+  chakra-reporter new "Bug bounty -- $h ($(jq -r .platform "$d/meta.json"))" >/dev/null 2>&1 || true
+  [[ -s "$d/loot/nuclei.txt" ]] && chakra-reporter note "$slug" "nuclei: $(wc -l < "$d/loot/nuclei.txt") findings, see loot/nuclei.txt" >/dev/null 2>&1 || true
+  echo "Report scaffold '$slug' created in chakra-reporter. Add findings:"
+  echo "  chakra-reporter finding <slug> --severity high --title \"...\""
+  echo "  chakra-reporter evidence <slug> $d/loot/<file>"
+  echo "  chakra-reporter build $slug"
+  echo
+  echo "Then submit on the platform:"
+  case "$(jq -r .platform "$d/meta.json")" in
+    hackerone) echo "  https://hackerone.com/$h" ;;
+    bugcrowd)  echo "  https://bugcrowd.com/$h" ;;
+    *)         echo "  (private program -- use your program's submission form)" ;;
+  esac
+  _audit "report" "$h" "scaffold $slug" 1
+}
+
+do_h1() {
+  local sub="${1:?h1: programs | import <handle>}"; shift
+  [[ -n "${H1_API_USER:-}" && -n "${H1_API_TOKEN:-}" ]] || \
+    _die "set H1_API_USER and H1_API_TOKEN in $CONF (HackerOne -> Settings -> API Tokens)"
+  local api="https://api.hackerone.com/v1/hackers"
+  case "$sub" in
+    programs)
+      curl -fsS -u "$H1_API_USER:$H1_API_TOKEN" -H 'Accept: application/json' \
+        "$api/programs?page[size]=100" 2>/dev/null \
+        | jq -r '.data[] | "\(.attributes.handle)\t\(.attributes.state)\t\(.attributes.name)"' \
+        | column -t -s$'\t' || _die "HackerOne API call failed (check the token)" ;;
+    import)
+      local h="${1:?chakra-bounty h1 import <handle>}"
+      [[ -d "$(_pdir "$h")" ]] || do_program new "$h" --platform hackerone
+      local d; d="$(_pdir "$h")"
+      curl -fsS -u "$H1_API_USER:$H1_API_TOKEN" -H 'Accept: application/json' \
+        "$api/programs/$h/structured_scopes?page[size]=100" 2>/dev/null > "$d/.h1_scope.json" \
+        || _die "could not fetch scope for '$h'"
+      jq -r '.data[] | select(.attributes.eligible_for_submission==true)
+             | select(.attributes.asset_type|test("URL|DOMAIN|WILDCARD|IP_ADDRESS|CIDR"))
+             | .attributes.asset_identifier' "$d/.h1_scope.json" 2>/dev/null | sort -u > "$d/scope.txt"
+      jq -r '.data[] | select(.attributes.eligible_for_submission==false)
+             | .attributes.asset_identifier' "$d/.h1_scope.json" 2>/dev/null | sort -u > "$d/out.txt"
+      echo "imported $(grep -cvE '^\s*$' "$d/scope.txt") in-scope, $(grep -cvE '^\s*$' "$d/out.txt") out-of-scope asset(s) for $h"
+      _audit "h1.import" "$h" "scope synced" 1 ;;
+    *) _die "h1: programs | import <handle>" ;;
+  esac
+}
+
+do_tools() {
+  echo "Bug bounty tools ($BOUNTY_BIN):"
+  local t v
+  for t in subfinder dnsx httpx nuclei katana notify gau waybackurls dalfox gowitness ffuf; do
+    if have "$t"; then
+      v="$("$t" -version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+      printf '  %-14s %s  %s\n' "$t" "OK" "${v:-}"
+    else
+      printf '  %-14s %s\n' "$t" "missing"
+    fi
+  done
+  [[ -d "$SECLISTS" ]] && echo "  SecLists       OK  ($SECLISTS)" || echo "  SecLists       not fetched  (chakra-bounty wordlists)"
+  echo
+  echo "Missing tools were not bundled or their fetch failed at build time."
+  echo "Reinstall one:  sudo /opt/chakra/bounty/install.sh <tool>"
+}
+
+do_wordlists() {
+  [[ -d "$SECLISTS/.git" ]] && { echo "SecLists present at $SECLISTS -- updating..."; git -C "$SECLISTS" pull --ff-only 2>&1 | tail -1; return; }
+  [[ $EUID -eq 0 ]] || _die "run as root: sudo chakra-bounty wordlists   (SecLists is ~1 GB)"
+  mkdir -p "$(dirname "$SECLISTS")"
+  echo "Cloning SecLists (~1 GB, shallow)..."
+  git clone --depth 1 https://github.com/danielmiessler/SecLists.git "$SECLISTS" \
+    && echo "-> $SECLISTS" || _die "clone failed"
+}
+
+status_json() {
+  local a; a="$(_active)"
+  local progs="[]"
+  if [[ -d "$ROOT" ]]; then
+    for d in "$ROOT"/*/; do
+      [[ -f "$d/meta.json" ]] || continue
+      progs="$(jq -c --slurpfile m "$d/meta.json" \
+        --argjson scope "$(grep -cvE '^\s*(#|$)' "$d/scope.txt" 2>/dev/null || echo 0)" \
+        --argjson live "$( [[ -f "$d/recon/live.txt" ]] && wc -l < "$d/recon/live.txt" || echo 0 )" \
+        '. + [$m[0] + {scope_count:$scope, live_hosts:$live}]' <<<"$progs")"
+    done
+  fi
+  local tools="{}" t
+  for t in subfinder dnsx httpx nuclei katana gau waybackurls dalfox gowitness ffuf; do
+    tools="$(jq -c --arg t "$t" --argjson ok "$(have "$t" && echo true || echo false)" '. + {($t):$ok}' <<<"$tools")"
+  done
+  jq -n --arg active "$a" --argjson programs "$progs" --argjson tools "$tools" \
+    --argjson seclists "$([[ -d "$SECLISTS" ]] && echo true || echo false)" \
+    --argjson h1 "$([[ -n "${H1_API_TOKEN:-}" ]] && echo true || echo false)" \
+    '{active:(if $active=="" then null else $active end), programs:$programs,
+      tools:$tools, seclists:$seclists, hackerone_api:$h1}'
+}
+
+status_human() {
+  echo "Chakra Bug Bounty"
+  echo "================="
+  echo
+  echo "Programs dir:   $ROOT"
+  echo "Active program: $(_active | grep . || echo '(none)')"
+  echo "HackerOne API:  $([[ -n "${H1_API_TOKEN:-}" ]] && echo 'configured' || echo "not set (see $CONF)")"
+  echo
+  do_program list
+  echo
+  echo "  program new <handle>   scope add <h> '*.dom'   recon   urls   scan   report"
+  echo "  chakra-bounty tools    -- tool inventory"
+}
+
+# ---------------------------------------------------------------- dispatch
+
+mkdir -p "$ROOT" 2>/dev/null || true
+json=0; [[ "${1:-}" == "--json" ]] && { json=1; shift; }
+cmd="${1:-status}"; shift || true
+
+case "$cmd" in
+  status|"")  if [[ $json -eq 1 ]]; then status_json; else status_human; fi ;;
+  program|prog) do_program "$@" ;;
+  scope)       do_scope "$@" ;;
+  recon)       do_recon "$@" ;;
+  urls)        do_urls "$@" ;;
+  scan)        do_scan "$@" ;;
+  note)        do_note "$@" ;;
+  report)      do_report "$@" ;;
+  h1)          do_h1 "$@" ;;
+  tools)       do_tools ;;
+  wordlists)   do_wordlists ;;
+  -h|--help)   sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) _die "unknown command '$cmd' -- see chakra-bounty --help" ;;
+esac

@@ -1360,6 +1360,64 @@ EOF
   done < "$menu_cfg/tools.list"
 }
 
+install_bounty_tools() {
+  # subfinder/dnsx/httpx/nuclei/katana/notify/gau/waybackurls/dalfox/
+  # gowitness -- official release binaries, no Go toolchain. Best-effort.
+  if [[ "$CLEAN" -eq 0 && -x "$ROOTFS/opt/chakra/bounty/bin/nuclei" ]]; then
+    log "Bug bounty tools already present in rootfs -- skipping (use --clean to refresh)."
+    return 0
+  fi
+  log "Fetching bug bounty tool binaries (ProjectDiscovery suite + gau/dalfox/...)..."
+  install -D -m 0755 "$PROJECT_ROOT/bugbounty/install.sh" "$ROOTFS/opt/chakra/bounty/install.sh"
+  chroot "$ROOTFS" /opt/chakra/bounty/install.sh \
+    || log "WARNING: some bug bounty tools failed to download -- 'chakra-bounty tools' shows what's missing."
+}
+
+apply_bounty() {
+  log "Installing Chakra Bug Bounty (Phase 20: chakra-bounty workflow + recon tools)..."
+  local menu_cfg="$PROJECT_ROOT/config/bounty-menu"
+  local apps_dir="$ROOTFS/usr/share/applications"
+  local dirs_dir="$ROOTFS/usr/share/desktop-directories"
+  local merged_dir="$ROOTFS/etc/xdg/menus/applications-merged"
+  local bin_dir="$ROOTFS/usr/lib/chakra/bin"
+  mkdir -p "$apps_dir" "$dirs_dir" "$merged_dir" "$bin_dir"
+
+  install_bounty_tools
+
+  cp "$PROJECT_ROOT/bugbounty/bin/chakra-bounty" "$bin_dir/chakra-bounty"
+  chmod +x "$bin_dir/chakra-bounty"
+  ln -sf /usr/lib/chakra/bin/chakra-bounty "$ROOTFS/usr/local/bin/chakra-bounty"
+
+  # put the bounty tool dir on every shell's PATH (ProjectDiscovery httpx
+  # then wins over python3-httpx's CLI, which is the expectation on a
+  # recon box; the python library is unaffected).
+  echo 'case ":$PATH:" in *:/opt/chakra/bounty/bin:*) ;; *) PATH="/opt/chakra/bounty/bin:$PATH" ;; esac' \
+    > "$ROOTFS/etc/profile.d/chakra-bounty-path.sh"
+
+  cp "$menu_cfg/chakra-bounty.directory" "$dirs_dir/"
+  cp "$menu_cfg/chakra-bounty.menu" "$merged_dir/"
+
+  # a fresh image ships with no programs / no API token
+  rm -rf "$ROOTFS"/home/*/bounty "$ROOTFS"/home/*/.config/chakra/bounty.conf 2>/dev/null || true
+
+  local tname cat exec_cmd needs_root safe_id run_cmd
+  while IFS='|' read -r tname cat exec_cmd needs_root; do
+    [[ -z "$tname" || "$tname" == \#* ]] && continue
+    safe_id="$(echo "$tname" | tr -c 'a-zA-Z0-9' '-' | tr -s '-')"
+    run_cmd="$exec_cmd"
+    [[ "$needs_root" == "1" ]] && run_cmd="sudo $exec_cmd"
+    cat > "$apps_dir/chakra-tool-bounty-$safe_id.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=$tname
+Icon=applications-internet
+Exec=konsole -e bash -c "$run_cmd; echo; echo '--- press Enter to close ---'; read"
+Terminal=false
+Categories=X-Chakra-$cat;
+EOF
+  done < "$menu_cfg/tools.list"
+}
+
 cleanup_rootfs() {
   # Strip transient junk before it gets sealed into the squashfs: scratch
   # files from apply_* chroot work, caches, apt lists, machine identity
@@ -1462,6 +1520,7 @@ main() {
   apply_shell
   apply_compat
   apply_office
+  apply_bounty
   run_checks
   cleanup_mounts
   cleanup_rootfs

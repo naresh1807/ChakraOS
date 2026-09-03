@@ -1,0 +1,4 @@
+# Chakra Bug Bounty menu (Phase 20).
+# Name|category_id|exec command|needs_root(0/1)
+Bug Bounty|BugBounty|chakra-bounty|0
+Tool Inventory|BugBounty|chakra-bounty tools|0

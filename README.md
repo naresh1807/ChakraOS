@@ -26,6 +26,7 @@ A secure, modular, AI-assisted desktop and mobile operating system ecosystem, bu
 - has **`chakra-compat`** — run Windows `.exe` files on Wine (64-bit), boxed in a no-network firejail sandbox by default, with an `analyze` mode (offline throwaway prefix + change report) for untrusted Windows samples that pairs with `chakra-lab`;
 - has **LibreOffice + `chakra-office`** — the suite, with macro security forced High, plus `open` (read-only, sandboxed), `inspect` (macro / OLE / external-link triage via oletools without opening the file), and `scrub` (a macro- and metadata-free copy).
 
+- has a **bug bounty workspace** — `chakra-bounty`: scope-first program management (`*.wildcard` / CIDR, HackerOne API scope import), a `subfinder → dnsx → httpx → nuclei` recon pipeline that scope-filters every target before touching it, rate-limited by default, handing findings to `chakra-reporter`;
 - has a **check suite** (`tests/`) — `sudo tests/run.sh` chroots into `build/rootfs` and asserts every `chakra-*` CLI, Start-menu entry, and the security substrate; the build runs it automatically (`--check` to make failures fatal).
 
 `compatibility/proton/` (Steam/Proton gaming) isn't yet placed in a phase, and a few things are deliberately deferred to a future installer (a real local LLM, AppGuard, Secure Boot, persistence, custom shell widgets, 32-bit Wine) — all called out in `docs/roadmap.md` and each area's `README.md`.
@@ -48,6 +49,7 @@ A secure, modular, AI-assisted desktop and mobile operating system ecosystem, bu
 - `compatibility/` — Phase 17: `chakra-compat` (Wine front-end); `proton/` reserved for gaming.
 - `office/` — Phase 18: `chakra-office` (LibreOffice + document-safety front-end).
 - `tests/` — Phase 19: the read-only check suite (`run.sh`, `unit/`, `integration/`, `security/`, `boot/`).
+- `bugbounty/` — Phase 20: `chakra-bounty` + `install.sh` (the recon-tool fetcher).
 - Every other top-level directory mirrors the project's long-term architecture; see `docs/roadmap.md`.
 
 ## Building the ISO

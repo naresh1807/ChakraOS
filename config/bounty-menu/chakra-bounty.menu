@@ -1,0 +1,16 @@
+<!DOCTYPE Menu PUBLIC "-//freedesktop//DTD Menu 1.0//EN"
+ "http://www.freedesktop.org/standards/menu-spec/menu-1.0.dtd">
+<!--
+  Chakra OS "Bug Bounty" menu (Phase 20). Merged via the standard XDG
+  DefaultMergeDirs mechanism -- see config/security-menu/ etc.
+-->
+<Menu>
+  <Name>Applications</Name>
+  <Menu>
+    <Name>ChakraBugBounty</Name>
+    <Directory>chakra-bounty.directory</Directory>
+    <Include>
+      <Category>X-Chakra-BugBounty</Category>
+    </Include>
+  </Menu>
+</Menu>

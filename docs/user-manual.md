@@ -13,7 +13,7 @@ Artifact; this file is the canonical source.
 Chakra OS boots from a USB stick or DVD as a **live session**: the whole
 system runs from a compressed image in RAM with a writable overlay on
 top. Nothing is written back to the boot media, and **nothing survives a
-reboot** unless you save it deliberately (§14).
+reboot** unless you save it deliberately (§15).
 
 ### Write the ISO and boot it
 
@@ -65,7 +65,7 @@ are renamed: Konsole → **Terminal**, Dolphin → **File Explorer**, plus a
 
 Start-menu sections: **Security Tools · Chakra Tools · Security Research ·
 Developer Tools · System Maintenance · Identity · Mobile · Appearance ·
-Compatibility · Office.**
+Compatibility · Office · Bug Bounty.**
 
 Each Chakra menu entry opens a terminal running the matching command and
 waits for Enter so you can read the output. **Security Tools** is a
@@ -302,7 +302,45 @@ Chakra Lab for a deeper look.
 
 ---
 
-## 13. How Chakra works
+## 13. Bug bounty
+
+`chakra-bounty` is a scope-first workflow for running bug bounty as a
+job. Each program is a directory under `~/bounty/<handle>/`. It routes
+**every target through a scope check before any tool touches it** —
+scanning out of scope on a live program gets you banned — and rate-limits
+by default (25 req/s, raise per program in `meta.json`).
+
+```
+$ chakra-bounty program new acme --platform hackerone
+$ chakra-bounty scope add acme '*.acme.com' api.acme.io
+$ chakra-bounty scope out acme legacy.acme.com
+$ chakra-bounty recon acme         # subfinder -> dnsx -> httpx  (scoped)
+$ chakra-bounty urls acme          # gau + waybackurls + katana -> params
+$ chakra-bounty scan acme          # nuclei vs. live hosts, rate-limited
+$ chakra-bounty report acme        # scaffold a chakra-reporter report + submit URL
+```
+
+**HackerOne API** — put a token in `~/.config/chakra/bounty.conf`
+(`H1_API_USER=`, `H1_API_TOKEN=` from *Settings → API Tokens*; never
+committed), then:
+
+```
+$ chakra-bounty h1 programs        # your programs
+$ chakra-bounty h1 import acme     # pull the program's structured scope into scope.txt
+```
+
+**Tools** live in `/opt/chakra/bounty/bin` (on `PATH`): `subfinder`,
+`dnsx`, `httpx`, `nuclei`, `katana`, `notify`, `gau`, `waybackurls`,
+`dalfox`, `gowitness`, plus `ffuf`. `chakra-bounty tools` shows versions;
+`sudo /opt/chakra/bounty/install.sh <tool>` re-fetches one;
+`sudo chakra-bounty wordlists` clones SecLists (~1 GB) on demand.
+
+> ProjectDiscovery's `httpx` is the `httpx` command here (it shadows the
+> `python3-httpx` CLI; the Python library is unaffected).
+
+---
+
+## 14. How Chakra works
 
 **Everything is audited.** Every Chakra tool action is written to
 `/var/log/chakra/audit/sentinel.jsonl`, one JSON object per line:
@@ -324,7 +362,7 @@ future phase. Each area's `README.md` spells out what's real and pending.
 
 ---
 
-## 14. Persistence & limits
+## 15. Persistence & limits
 
 > **Nothing persists by default.** v0.1 is a live ISO. The filesystem is
 > a RAM overlay — installed packages, files, paired phones, enrolled
@@ -348,7 +386,7 @@ Not in v0.1, pending the installer:
 
 ---
 
-## 15. Building the ISO
+## 16. Building the ISO
 
 One script, from a Debian host with `debootstrap`, `squashfs-tools`,
 `xorriso`, `grub-pc-bin`, `grub-efi-amd64-bin`, `mtools`, `dosfstools`:

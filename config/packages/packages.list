@@ -118,6 +118,13 @@ hunspell-en-us
 python3-venv
 zip
 
+# Phase 20: bug bounty workspace. ffuf (web fuzzer) is in bookworm; the
+# rest of the recon suite (subfinder/httpx/nuclei/...) is fetched as
+# release binaries by bugbounty/install.sh. grepcidr lets chakra-bounty
+# match CIDR scope entries; unzip/curl (already in) drive the installer.
+ffuf
+grepcidr
+
 # Audio foundation
 pipewire
 pipewire-pulse

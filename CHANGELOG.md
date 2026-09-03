@@ -4,7 +4,26 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Dates ar
 
 ## [Unreleased]
 
+## 2026-09-03 — Phase 20: bug bounty workspace
+
 ### Added
+- `chakra-bounty` — a scope-first bug bounty workflow. Each program is a directory under `~/bounty/<handle>/` (`meta.json`, `scope.txt`, `out.txt`, `notes.md`, `recon/`, `urls/`, `loot/`).
+  - `program new [--platform hackerone|bugcrowd|intigriti|private] | list | show | use`
+  - `scope add | out | check` — bare host, `*.wildcard`, or CIDR patterns; `check` exits 0 only if in-scope **and** not out-of-scope.
+  - `recon` — `subfinder → dnsx → httpx` over the wildcard roots, **every candidate scope-filtered before any probe**, results into `recon/`.
+  - `urls` — `gau` + `waybackurls` + `katana`, deduped and scope-filtered, params split out.
+  - `scan` — `nuclei` against `recon/live.txt`, rate-limited (default 25 req/s; per-program `"rate_limit"` in `meta.json`). `--dry-run` on all three pipelines.
+  - `note`, `report` (scaffolds a `chakra-reporter` report + prints the platform submit URL), `status` / `--json`, `tools`, `wordlists`.
+  - `h1 programs | import <handle>` — HackerOne API (token in `~/.config/chakra/bounty.conf`, never committed): lists your programs and pulls structured scope straight into `scope.txt` / `out.txt`.
+- Every state-changing action → Chakra Audit trail (`actor=chakra-bounty`, risk tier 1–2).
+- `bugbounty/install.sh` fetches official static release binaries (no Go toolchain) into `/opt/chakra/bounty/bin`: **subfinder, dnsx, httpx, nuclei, katana, notify** (ProjectDiscovery) + **gau, waybackurls, dalfox, gowitness**. `nuclei -update-templates` runs at build. `/etc/profile.d/chakra-bounty-path.sh` puts the dir on `PATH` (ProjectDiscovery `httpx` then wins over `python3-httpx`'s CLI; the library is untouched). New **Bug Bounty** menu. Packages: `ffuf`, `grepcidr`.
+- `chakra-bounty wordlists` clones SecLists (~1 GB) to `/opt/chakra/bounty/SecLists` on demand — not bundled.
+
+### Design / deferred
+- Scope enforcement is the whole point: out-of-scope targets are dropped with a visible count before any tool touches them, because scanning out of scope on a live program gets you banned.
+- Deferred: automated report submission (`report` scaffolds and opens the page, it does not file), a continuous-monitoring scheduler with `notify` alerts, Burp Suite Pro, distributed/cloud recon, `arjun`/`x8` parameter brute-forcing.
+
+### Added (earlier)
 - **Chakra Sentinel — Google Gemini** as an explain-layer provider alongside NVIDIA NIM. `/etc/chakra/sentinel.conf` gains `GEMINI_API_KEY` / `GEMINI_MODEL` (default `gemini-2.0-flash`) / `GEMINI_BASE_URL`, plus `SENTINEL_LLM` to pin a provider (`gemini` | `nim` | `none`). Auto-picks Gemini if its key is set, else NIM, else offline. `CHAKRA_GEMINI_API_KEY` / `CHAKRA_NIM_API_KEY` / `CHAKRA_SENTINEL_LLM` env vars override the file. Unchanged: the LLM is never in the decision path (it only explains already-collected, Risk-0 output), no key is shipped in the image, and any failure falls back to raw data without blocking.
 
 ## 2026-09-03 — Phase 19: test harness & build hygiene
