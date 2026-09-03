@@ -5,19 +5,34 @@
 # Chakra system API tools (chakra-health, chakra-processlens, etc.),
 # runs it, and shows you the result. No setup, no internet, no API key.
 #
-# NVIDIA NIM integration is OPTIONAL and OFF by default. If you set
-# NIM_API_KEY below, Sentinel additionally sends the ALREADY-COLLECTED
-# tool output to NVIDIA's hosted API and asks it to explain the result
-# in plainer language. The AI never decides which tool to run or gets
-# raw system access -- it only ever sees data the deterministic,
-# Risk-0-only dispatcher already fetched. This matches the master
-# manual's own AI safety principle: AI -> Structured Intent -> Policy
-# Validator -> Approved Chakra API, never AI -> raw shell.
+# The EXPLAIN LAYER is OPTIONAL and OFF by default. If you set an API key
+# below, Sentinel additionally sends the ALREADY-COLLECTED tool output to
+# a hosted LLM and asks it to explain the result in plainer language. The
+# LLM never decides which tool runs or gets raw system access -- it only
+# ever sees data the deterministic, Risk-0-only dispatcher already
+# fetched. This matches the master manual's own AI safety principle:
+# AI -> Structured Intent -> Policy Validator -> Approved Chakra API,
+# never AI -> raw shell.
 #
-# Get a free API key at https://build.nvidia.com (NVIDIA account
-# required). Queries sent to NIM leave this machine -- if that's not
-# acceptable for your use, just leave NIM_API_KEY blank.
+# Queries you send to a hosted LLM leave this machine. If that's not
+# acceptable, leave every key blank -- Sentinel stays fully functional.
+# No key is ever shipped in the Chakra image; bring your own.
+#
+# The provider is auto-picked: Gemini if GEMINI_API_KEY is set, else NIM
+# if NIM_API_KEY is set, else offline. Pin one with SENTINEL_LLM below
+# (gemini | nim | none).
 
+SENTINEL_LLM=
+
+# --- Google Gemini --------------------------------------------------
+# Free API key: https://aistudio.google.com/apikey  (Google account).
+# Any current model works; gemini-2.0-flash is fast and free-tier friendly.
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.0-flash
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
+
+# --- NVIDIA NIM ---------------------------------------------------------
+# Free API key: https://build.nvidia.com  (NVIDIA account).
 NIM_API_KEY=
 NIM_MODEL=meta/llama-3.1-8b-instruct
 NIM_BASE_URL=https://integrate.api.nvidia.com/v1

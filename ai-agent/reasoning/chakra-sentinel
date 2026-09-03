@@ -5,14 +5,15 @@
 #   query -> Intent Engine (deterministic pattern match, this script)
 #          -> Chakra system API (one of the Phase 6 tools, Risk 0 only)
 #          -> Chakra Audit (every dispatch logged)
-#          -> [optional] NVIDIA NIM explains the ALREADY-COLLECTED output
+#          -> [optional] a hosted LLM explains the ALREADY-COLLECTED output
 #
-# The "AI" (NIM), when configured, NEVER decides which tool runs or
-# touches the system directly -- it only ever sees data the
-# deterministic dispatcher already fetched. Without NIM configured,
-# Sentinel is fully offline and still fully functional; NIM only adds
-# a plain-language explanation layer on top. See
+# The explain layer -- Google Gemini or NVIDIA NIM, whichever key is set
+# -- NEVER decides which tool runs or touches the system directly. It
+# only ever sees data the deterministic dispatcher already fetched. With
+# no key set, Sentinel is fully offline and still fully functional; the
+# LLM only adds a plain-language explanation on top. See
 # /etc/chakra/sentinel.conf and ai-agent/README.md for the reasoning.
+# No key is ever shipped in the image -- each user brings their own.
 #
 # Usage:
 #   chakra-sentinel "why is my system slow?"
@@ -23,11 +24,20 @@ BIN=/usr/lib/chakra/bin
 CONF=/etc/chakra/sentinel.conf
 MODE="${CHAKRA_SENTINEL_MODE:-daily}"
 
+# Explain-layer config (from /etc/chakra/sentinel.conf; all blank by default).
 NIM_API_KEY=""
 NIM_MODEL="meta/llama-3.1-8b-instruct"
 NIM_BASE_URL="https://integrate.api.nvidia.com/v1"
+GEMINI_API_KEY=""
+GEMINI_MODEL="gemini-2.0-flash"
+GEMINI_BASE_URL="https://generativelanguage.googleapis.com/v1beta"
+SENTINEL_LLM=""   # force a provider: gemini | nim | none. blank = auto-pick
 # shellcheck disable=SC1090
 [[ -f "$CONF" ]] && source "$CONF" 2>/dev/null
+# CHAKRA_* env vars override the config file (handy for testing)
+GEMINI_API_KEY="${CHAKRA_GEMINI_API_KEY:-$GEMINI_API_KEY}"
+NIM_API_KEY="${CHAKRA_NIM_API_KEY:-$NIM_API_KEY}"
+SENTINEL_LLM="${CHAKRA_SENTINEL_LLM:-$SENTINEL_LLM}"
 
 audit() {
   # No 2>/dev/null here on purpose: if the audit record can't be written
@@ -38,27 +48,62 @@ audit() {
     --result "$2" || true
 }
 
-# NIM explain layer -- only called if NIM_API_KEY is set. Takes the
-# original question and the tool's raw output; returns a plain-language
-# explanation, or empty on any failure (caller falls back to raw output).
-nim_explain() {
-  local question="$1" tool_output="$2"
-  [[ -z "$NIM_API_KEY" ]] && return 1
+# Which hosted LLM (if any) explains the collected output. The explain
+# layer is NEVER in the decision path -- see ai-agent/README.md.
+_llm_provider() {
+  case "${SENTINEL_LLM,,}" in
+    none)   echo none; return ;;
+    gemini) [[ -n "$GEMINI_API_KEY" ]] && { echo gemini; return; }; echo none; return ;;
+    nim)    [[ -n "$NIM_API_KEY"    ]] && { echo nim;    return; }; echo none; return ;;
+  esac
+  [[ -n "$GEMINI_API_KEY" ]] && { echo gemini; return; }
+  [[ -n "$NIM_API_KEY"    ]] && { echo nim;    return; }
+  echo none
+}
+
+_SYS_PROMPT="You are Chakra Sentinel, a system assistant. You are given the ALREADY-COLLECTED output of a read-only system command. Explain it clearly and briefly for the user. Do not invent data not present in the output. Do not suggest running commands that were not already run."
+
+# Each *_explain takes the question + the tool's raw output and prints a
+# plain-language explanation, or returns non-zero on any failure (the
+# caller then just shows the raw output -- it never blocks on the network).
+_nim_explain() {
+  local q="$1" data="$2" body resp text
   command -v curl >/dev/null 2>&1 || return 1
-  local body resp
-  body=$(jq -n --arg model "$NIM_MODEL" --arg q "$question" --arg data "$tool_output" '
+  body=$(jq -n --arg model "$NIM_MODEL" --arg sys "$_SYS_PROMPT" --arg q "$q" --arg d "$data" '
     {model:$model, max_tokens:300, temperature:0.3, messages:[
-      {role:"system", content:"You are Chakra Sentinel, a system assistant. You are given the ALREADY-COLLECTED output of a read-only system command. Explain it clearly and briefly for the user. Do not invent data not present in the output. Do not suggest running commands that were not already run."},
-      {role:"user", content:("Question: " + $q + "\n\nCommand output:\n" + $data)}
+      {role:"system", content:$sys},
+      {role:"user", content:("Question: " + $q + "\n\nCommand output:\n" + $d)}
     ]}')
   resp=$(curl -sS --max-time 15 -X POST "$NIM_BASE_URL/chat/completions" \
     -H "Authorization: Bearer $NIM_API_KEY" -H "Content-Type: application/json" \
     -d "$body" 2>/dev/null)
-  local text
   text=$(echo "$resp" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
-  [[ -z "$text" ]] && return 1
-  echo "$text"
-  return 0
+  [[ -n "$text" ]] && { printf '%s\n' "$text"; return 0; }
+  return 1
+}
+
+_gemini_explain() {
+  local q="$1" data="$2" body resp text
+  command -v curl >/dev/null 2>&1 || return 1
+  body=$(jq -n --arg sys "$_SYS_PROMPT" --arg q "$q" --arg d "$data" '
+    {systemInstruction:{parts:[{text:$sys}]},
+     contents:[{role:"user", parts:[{text:("Question: " + $q + "\n\nCommand output:\n" + $d)}]}],
+     generationConfig:{temperature:0.3, maxOutputTokens:300}}')
+  resp=$(curl -sS --max-time 15 \
+    -H "x-goog-api-key: $GEMINI_API_KEY" -H "Content-Type: application/json" \
+    -X POST "$GEMINI_BASE_URL/models/$GEMINI_MODEL:generateContent" \
+    -d "$body" 2>/dev/null)
+  text=$(echo "$resp" | jq -r '[.candidates[0].content.parts[].text] | join("") // empty' 2>/dev/null)
+  [[ -n "$text" ]] && { printf '%s\n' "$text"; return 0; }
+  return 1
+}
+
+llm_explain() {  # question, tool_output
+  case "$(_llm_provider)" in
+    gemini) _gemini_explain "$1" "$2" ;;
+    nim)    _nim_explain "$1" "$2" ;;
+    *)      return 1 ;;
+  esac
 }
 
 # Intent Engine: deterministic keyword routing. Not a language model --
@@ -100,26 +145,35 @@ dispatch() {
 
   audit "$action" "success"
 
-  if [[ -n "$NIM_API_KEY" ]]; then
+  local prov; prov="$(_llm_provider)"
+  if [[ "$prov" != none ]]; then
     local explained
-    if explained="$(nim_explain "$1" "$output")"; then
+    if explained="$(llm_explain "$1" "$output")"; then
       echo "$explained"
       echo
       echo "--- raw data ---"
       echo "$output"
       return 0
     fi
-    echo "(NVIDIA NIM configured but unreachable -- showing raw data.)"
+    echo "($prov explain layer configured but unreachable -- showing raw data.)"
     echo
   fi
   echo "$output"
+}
+
+_llm_status() {
+  case "$(_llm_provider)" in
+    gemini) echo "Explain layer: Google Gemini ($GEMINI_MODEL)" ;;
+    nim)    echo "Explain layer: NVIDIA NIM ($NIM_MODEL)" ;;
+    *)      echo "Explain layer: none (offline pattern-matching only -- set a key in $CONF)" ;;
+  esac
 }
 
 if [[ $# -gt 0 ]]; then
   dispatch "$*"
 else
   echo "Chakra Sentinel -- read-only mode (Risk tier 0 only). Type 'exit' to quit."
-  [[ -n "$NIM_API_KEY" ]] && echo "NVIDIA NIM: configured" || echo "NVIDIA NIM: not configured (offline pattern-matching only -- see /etc/chakra/sentinel.conf)"
+  _llm_status
   echo
   while true; do
     read -r -p "sentinel> " query || break

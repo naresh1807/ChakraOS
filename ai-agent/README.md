@@ -6,13 +6,24 @@ The master manual's "local-first AI" (Section 55) means bundling an actual LLM r
 
 What's built instead: the **real architecture** the manual describes in Sections 13–17 — Intent Engine → Tool Router → Chakra system APIs, with every dispatch going through the Chakra Audit trail — implemented with deterministic pattern-matching instead of a language model. This is genuinely functional today, not a placeholder, and scoped to Risk 0 (read-only) only, exactly as Phase 7 is meant to be — Risk 1–3 actions need Phase 8's enforcement machinery first.
 
-## NVIDIA NIM: optional upgrade, not the foundation
+## The explain layer: optional upgrade, not the foundation
 
-Discussed explicitly with the user before building this (see the conversation this shipped in). NVIDIA NIM (build.nvidia.com's hosted, OpenAI-compatible API) can make Sentinel's explanations genuinely conversational instead of raw command output — but routing every query through a third party by default would invert the manual's own stated priority (local-first, privacy, offline-capable, cloud "added later" as optional). So:
+A hosted LLM can make Sentinel's explanations genuinely conversational instead of raw command output — but routing every query through a third party by default would invert the manual's own stated priority (local-first, privacy, offline-capable, cloud "added later" as optional). So:
 
-- **Off by default.** `/etc/chakra/sentinel.conf` ships with `NIM_API_KEY=` blank. Sentinel is fully offline and fully functional without it.
+- **Off by default.** `/etc/chakra/sentinel.conf` ships with every key blank. Sentinel is fully offline and fully functional without one.
 - **Never baked into the image.** A shared API key distributed in an OS image would be rate-limited or banned almost immediately, and is bad practice regardless — each user brings their own key if they want this.
-- **Never in the decision path.** This is the important one, and it's what keeps this implementation honest to the manual's own AI safety principle (Section 16: `AI → Structured Intent → Policy Validator → Approved Chakra API`, never `AI → raw shell`). The deterministic pattern-matcher *always* decides which tool runs — that decision is Risk-0-scoped and audited before NIM ever sees anything. When configured, NIM only receives the tool's *already-collected* output and is asked to explain it in plain language. It cannot trigger a different action, and if the API call fails or is unreachable, Sentinel silently falls back to showing the raw data — it never blocks on the network.
+- **Never in the decision path.** This is the important one, and it's what keeps this implementation honest to the manual's own AI safety principle (Section 16: `AI → Structured Intent → Policy Validator → Approved Chakra API`, never `AI → raw shell`). The deterministic pattern-matcher *always* decides which tool runs — that decision is Risk-0-scoped and audited before the LLM sees anything. When configured, the LLM only receives the tool's *already-collected* output and is asked to explain it in plain language. It cannot trigger a different action, and if the API call fails or is unreachable, Sentinel silently falls back to showing the raw data — it never blocks on the network.
+
+### Providers
+
+Two hosted providers are supported; set one key in `/etc/chakra/sentinel.conf` (or export `CHAKRA_GEMINI_API_KEY` / `CHAKRA_NIM_API_KEY` for a session). Auto-picked in this order, or pin with `SENTINEL_LLM=gemini|nim|none`:
+
+| Provider | Key from | Default model | Endpoint |
+|---|---|---|---|
+| **Google Gemini** | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | `gemini-2.0-flash` | `generativelanguage.googleapis.com/v1beta` |
+| **NVIDIA NIM** | [build.nvidia.com](https://build.nvidia.com) | `meta/llama-3.1-8b-instruct` | `integrate.api.nvidia.com/v1` (OpenAI-compatible) |
+
+Both are called with the same system prompt ("explain the already-collected output, don't invent data, don't suggest commands"), a 15 s timeout, and `max output ≈ 300 tokens`.
 
 ## What Sentinel can do right now
 
@@ -33,7 +44,7 @@ Every dispatch — matched or not — is logged to `/var/log/chakra/audit/sentin
 
 ## What's deliberately not here yet
 
-- A real local LLM (see above) — separate future phase.
+- A real local LLM (see above) — separate future phase. The hosted providers above are an *explain layer*, not the local-first runtime the manual ultimately wants.
 - Anything above Risk tier 0. No system-changing action goes through Sentinel yet; that needs Phase 8's Policy Engine enforcement first.
 - Sentinel Modes (Daily/Developer/Privacy/Defense/Security Lab/Forensics/System Admin) actually changing *behavior* — the `--mode` concept is recorded in the audit log already, but since everything is Risk 0 today, mode doesn't gate anything yet. It will once Phase 8 exists.
 - True natural-language understanding — this is keyword matching, not language understanding, and says so to the user when it doesn't recognize a query rather than pretending to.

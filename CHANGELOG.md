@@ -4,6 +4,9 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/). Dates ar
 
 ## [Unreleased]
 
+### Added
+- **Chakra Sentinel — Google Gemini** as an explain-layer provider alongside NVIDIA NIM. `/etc/chakra/sentinel.conf` gains `GEMINI_API_KEY` / `GEMINI_MODEL` (default `gemini-2.0-flash`) / `GEMINI_BASE_URL`, plus `SENTINEL_LLM` to pin a provider (`gemini` | `nim` | `none`). Auto-picks Gemini if its key is set, else NIM, else offline. `CHAKRA_GEMINI_API_KEY` / `CHAKRA_NIM_API_KEY` / `CHAKRA_SENTINEL_LLM` env vars override the file. Unchanged: the LLM is never in the decision path (it only explains already-collected, Risk-0 output), no key is shipped in the image, and any failure falls back to raw data without blocking.
+
 ## 2026-09-03 — Phase 19: test harness & build hygiene
 
 ### Added
