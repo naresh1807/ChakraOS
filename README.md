@@ -2,7 +2,7 @@
 
 A secure, modular, AI-assisted desktop and mobile operating system ecosystem, built on Debian GNU/Linux. Named after Lord Vishnu's Sudarshana Chakra — a tool meant to do everything.
 
-See `docs/` for phase-by-phase status and the full roadmap.
+**New here?** Read the [user manual](docs/user-manual.md) — booting Chakra, the desktop, and every `chakra-*` command. See `docs/` for phase-by-phase status and the full roadmap.
 
 ## Status
 
